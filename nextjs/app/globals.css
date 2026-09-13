@@ -1,26 +1,260 @@
 @import "tailwindcss";
 
+/* Dark is an authored second theme, opted into by a class on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------- tokens --
+   Warm "archive" palette. Neutrals carry a trace of the brand hue so paper
+   and ink feel related instead of gray. Light is the default.              */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: oklch(0.972 0.008 78);
+  --surface: oklch(0.994 0.004 78);
+  --surface-2: oklch(0.952 0.011 78);
+  --surface-3: oklch(0.925 0.013 78);
+  --line: oklch(0.884 0.012 74);
+  --line-strong: oklch(0.796 0.015 72);
+
+  --ink: oklch(0.243 0.02 62);
+  --ink-muted: oklch(0.505 0.016 66);
+  --ink-faint: oklch(0.652 0.013 70);
+
+  --primary: oklch(0.505 0.132 46);
+  --primary-hover: oklch(0.452 0.13 46);
+  --primary-soft: oklch(0.945 0.03 55);
+  --on-primary: oklch(0.986 0.01 80);
+
+  --accent: oklch(0.512 0.083 188);
+  --accent-soft: oklch(0.94 0.03 188);
+  --danger: oklch(0.505 0.17 26);
+  --danger-soft: oklch(0.95 0.03 26);
+  --warning: oklch(0.612 0.126 70);
+  --success: oklch(0.532 0.104 150);
+
+  --ring: oklch(0.505 0.132 46 / 0.55);
+  --shadow-1: 0 1px 2px oklch(0.2 0.02 62 / 0.06);
+  --shadow-2: 0 10px 28px oklch(0.2 0.02 62 / 0.13);
+  --scrim: oklch(0.2 0.02 62 / 0.42);
+}
+
+.dark {
+  --paper: oklch(0.184 0.012 62);
+  --surface: oklch(0.226 0.014 62);
+  --surface-2: oklch(0.263 0.015 62);
+  --surface-3: oklch(0.3 0.016 62);
+  --line: oklch(0.33 0.014 64);
+  --line-strong: oklch(0.425 0.016 64);
+
+  --ink: oklch(0.936 0.01 80);
+  --ink-muted: oklch(0.722 0.013 74);
+  --ink-faint: oklch(0.576 0.013 70);
+
+  --primary: oklch(0.735 0.118 55);
+  --primary-hover: oklch(0.784 0.114 55);
+  --primary-soft: oklch(0.305 0.045 55);
+  --on-primary: oklch(0.198 0.02 55);
+
+  --accent: oklch(0.734 0.08 188);
+  --accent-soft: oklch(0.3 0.032 188);
+  --danger: oklch(0.662 0.15 28);
+  --danger-soft: oklch(0.3 0.045 28);
+  --warning: oklch(0.762 0.11 72);
+  --success: oklch(0.7 0.096 150);
+
+  --ring: oklch(0.735 0.118 55 / 0.6);
+  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.4);
+  --shadow-2: 0 12px 32px oklch(0 0 0 / 0.5);
+  --scrim: oklch(0.1 0.01 62 / 0.62);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-on-primary: var(--on-primary);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+  --font-display: var(--font-fraunces), Georgia, serif;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ------------------------------------------------------------------ base -- */
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.6;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    line-height: 1.18;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Keyboard users get a ring; pointer users do not. Never removed. */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--primary-soft);
+    color: var(--ink);
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* iOS Safari zooms any field under 16px; keep form text at 1rem on phones. */
+  @media (max-width: 639px) {
+    input,
+    select,
+    textarea {
+      font-size: 1rem;
+    }
+  }
+
+  button,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ------------------------------------------------------------- utilities -- */
+@utility panel {
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+@utility mono-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+@utility nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- motion -- */
+/* Opt-in: the static version is the default, no overrides to chase.        */
+@keyframes ahaai-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ahaai-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ahaai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ahaai-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: ahaai-rise 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-fade {
+    animation: ahaai-fade 200ms ease-out both;
+  }
+
+  .animate-spin-slow {
+    animation: ahaai-spin 800ms linear infinite;
+  }
+
+  .animate-pulse-soft {
+    animation: ahaai-pulse 1.6s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-rise,
+    .animate-fade {
+      animation: ahaai-fade 150ms ease-out both;
+      transform: none;
+    }
+  }
 }

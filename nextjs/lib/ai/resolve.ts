@@ -6,13 +6,13 @@ import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import type { AiMode } from "@/lib/db/schema";
+import type { AiMode, AiProvider } from "@/lib/db/schema";
 import type { Database } from "@/lib/db/types";
 import { AppError } from "@/lib/http/errors";
 import { getSettings } from "@/lib/settings";
 import { decryptApiKey } from "./crypto";
 import { PROVIDER_PRESETS, getPreset, type ProviderPreset } from "./presets";
-import { getProvider } from "./service";
+import { getProvider, listProviders } from "./service";
 import { assertSafeBaseUrl } from "./url-guard";
 
 export interface ResolvedModel {
@@ -97,7 +97,31 @@ export async function resolveLanguageModel(
   options: ResolveOptions = {},
 ): Promise<ResolvedModel> {
   const settings = await getSettings(db, userId);
-  const providerId = options.providerId ?? settings.defaultProviderId ?? undefined;
+  const desiredLocal =
+    options.mode === "local" ? true : options.mode === "cloud" ? false : undefined;
+
+  let row: AiProvider | undefined;
+
+  // An explicit provider is only a preference. If it does not match the
+  // requested mode, fall through to one that does instead of refusing.
+  if (options.providerId) {
+    const candidate = await getProvider(db, userId, options.providerId);
+    if (desiredLocal === undefined || candidate.isLocal === desiredLocal) {
+      row = candidate;
+    }
+  }
+
+  // Prefer the saved default among the providers that match the mode.
+  if (!row && desiredLocal !== undefined) {
+    const providers = await listProviders(db, userId);
+    const matching = providers.filter((p) => p.isLocal === desiredLocal);
+    row =
+      matching.find((p) => p.id === settings.defaultProviderId) ?? matching[0];
+  }
+
+  if (!row && desiredLocal === undefined && settings.defaultProviderId) {
+    row = await getProvider(db, userId, settings.defaultProviderId);
+  }
 
   let preset: ProviderPreset | undefined;
   let apiKey: string | undefined;
@@ -106,8 +130,7 @@ export async function resolveLanguageModel(
   let isLocal = false;
   let source: ResolvedModel["source"] = "database";
 
-  if (providerId) {
-    const row = await getProvider(db, userId, providerId);
+  if (row) {
     preset = getPreset(row.presetId);
     if (!preset) throw AppError.badRequest("Unknown provider preset");
 
@@ -120,10 +143,29 @@ export async function resolveLanguageModel(
     }
     modelId = options.model ?? row.defaultModel ?? preset.defaultModels[0];
   } else {
+    // Environment keys only ever cover cloud providers, and never satisfy a
+    // request that asked for a local one.
+    if (desiredLocal === true) {
+      throw AppError.badRequest(
+        "Local mode needs a model running on this machine, and no local provider is set up. Add Ollama, LM Studio, or vLLM in settings, or switch the search to cloud.",
+        { reason: "no_matching_provider", mode: "local", alternativeMode: "cloud" },
+      );
+    }
+
     const fallback = pickEnvPreset();
     if (!fallback) {
+      if (desiredLocal === false) {
+        throw AppError.badRequest(
+          "Cloud mode needs a hosted provider, and none is set up. Add one in settings, or switch the search to local.",
+          {
+            reason: "no_matching_provider",
+            mode: "cloud",
+            alternativeMode: "local",
+          },
+        );
+      }
       throw AppError.badRequest(
-        "No AI provider is configured. Add one in AI settings.",
+        "No AI provider is set up. Add one in settings, then search again.",
       );
     }
     preset = fallback.preset;
@@ -141,17 +183,6 @@ export async function resolveLanguageModel(
   if (baseUrl) assertSafeBaseUrl(baseUrl, isLocal);
   if (!modelId) {
     throw AppError.badRequest("A model id is required for this provider");
-  }
-
-  if (options.mode === "local" && !isLocal) {
-    throw AppError.badRequest(
-      "Selected provider is not local. Switch to cloud mode or choose a local provider.",
-    );
-  }
-  if (options.mode === "cloud" && isLocal) {
-    throw AppError.badRequest(
-      "Selected provider is local. Switch to local mode.",
-    );
   }
 
   return {

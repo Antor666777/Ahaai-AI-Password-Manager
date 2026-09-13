@@ -120,6 +120,66 @@ describe("ai provider routes", () => {
     expect(removed.status).toBe(404);
   });
 
+  it("accepts a key for a custom endpoint at creation or later", async () => {
+    const user = await createTestUser(ctx.db, {
+      email: "ai-route-custom@example.com",
+    });
+    const cookie = cookieFor(user.token);
+
+    const withKey = await createProvider(
+      jsonRequest(
+        "/api/ai/providers",
+        "POST",
+        {
+          presetId: "custom-openai",
+          label: "gateway",
+          baseUrl: "https://gateway.example.com/v1",
+          defaultModel: "gpt-4o-mini",
+          apiKey: "sk-gateway-abcdef123456",
+        },
+        cookie,
+      ),
+    );
+    expect(withKey.status).toBe(201);
+    const withKeyBody = await withKey.json();
+    expect(withKeyBody.provider.hasApiKey).toBe(true);
+    expect(JSON.stringify(withKeyBody)).not.toContain("sk-gateway-abcdef123456");
+
+    // The same preset also works without a key, for an endpoint that is open.
+    const keyless = await createProvider(
+      jsonRequest(
+        "/api/ai/providers",
+        "POST",
+        {
+          presetId: "custom-openai",
+          label: "open-gateway",
+          baseUrl: "https://open.example.com/v1",
+          defaultModel: "gpt-4o-mini",
+        },
+        cookie,
+      ),
+    );
+    expect(keyless.status).toBe(201);
+    const keylessBody = await keyless.json();
+    expect(keylessBody.provider.hasApiKey).toBe(false);
+
+    // And a key can be added afterwards, which the settings card now offers.
+    const patched = await patchProvider(
+      jsonRequest(
+        `/api/ai/providers/${keylessBody.provider.id}`,
+        "PATCH",
+        { apiKey: "sk-later-abcdef123456" },
+        cookie,
+      ),
+      { params: Promise.resolve({ id: keylessBody.provider.id }) },
+    );
+    expect(patched.status).toBe(200);
+    const patchedBody = await patched.json();
+    expect(patchedBody.provider.hasApiKey).toBe(true);
+    expect(patchedBody.provider.apiKeyMask).toBeTruthy();
+    expect(JSON.stringify(patchedBody)).not.toContain("sk-later-abcdef123456");
+  });
+
   it("updates AI settings", async () => {
     const user = await createTestUser(ctx.db, { email: "ai-route-settings@example.com" });
     const cookie = cookieFor(user.token);

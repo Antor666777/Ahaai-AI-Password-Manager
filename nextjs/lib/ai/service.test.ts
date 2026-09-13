@@ -178,4 +178,27 @@ describe("ai provider service", () => {
 
     expect((await getAiSettings(ctx.db, alice.id)).aiMode).toBe("local");
   });
+
+  it("moves the mode to match a newly chosen default provider", async () => {
+    const user = await createTestUser(ctx.db, { email: "ai-set-c@example.com" });
+    const hosted = await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "hosted",
+      apiKey: "sk-test",
+    });
+
+    // Start on local, then choose a hosted default: the mode follows it.
+    await updateAiSettings(ctx.db, user.id, { aiMode: "local" });
+    const followed = await updateAiSettings(ctx.db, user.id, {
+      defaultProviderId: hosted.id,
+    });
+    expect(followed.aiMode).toBe("cloud");
+
+    // An explicit mode in the same call still wins.
+    const explicit = await updateAiSettings(ctx.db, user.id, {
+      aiMode: "local",
+      defaultProviderId: hosted.id,
+    });
+    expect(explicit.aiMode).toBe("local");
+  });
 });

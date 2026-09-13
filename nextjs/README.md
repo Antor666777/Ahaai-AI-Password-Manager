@@ -4,7 +4,7 @@ Zero-knowledge, Bitwarden-style password manager with an AI search that finds cr
 natural-language intent. The server never sees your master password, your encryption key, or any
 plaintext credential.
 
-**Status:** functional core and HTTP APIs are complete. The UI is intentionally deferred.
+**Status:** functional core, HTTP APIs, and the interface are all in place.
 
 ---
 
@@ -20,6 +20,7 @@ plaintext credential.
 | Breach checks | HaveIBeenPwned Pwned Passwords (k-anonymity) |
 | Rate limiting | Redis when `REDIS_URL` is set, in-memory fallback |
 | Tests | Vitest against in-memory Postgres (PGlite) |
+| Interface | Next.js App Router, Tailwind v4, IBM Plex Sans, IBM Plex Mono, Fraunces for the brand moment |
 
 ---
 
@@ -29,10 +30,15 @@ plaintext credential.
 cd nextjs
 npm install --include=dev
 
-cp .env.example .env
-# Required: DATABASE_URL, AUTH_PEPPER, ENCRYPTION_MASTER_KEY
+# Local secrets (gitignored). Generate each value with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+cp .env.example .env.local
+# Required: AUTH_PEPPER, ENCRYPTION_MASTER_KEY
+#
+# DATABASE_URL is optional in development. Without it the app boots an embedded
+# Postgres at ./.data/ahaai-dev and applies migrations on startup, so the UI runs
+# with zero setup. Set DATABASE_URL to use a real server.
 
-npm run db:migrate      # create tables
 npm run dev             # http://localhost:3000
 
 npm test                # Vitest (no external services needed)
@@ -102,13 +108,39 @@ vLLM) and a cloud request must use a cloud provider. Provider API keys are encry
 
 ---
 
+## Interface
+
+The interface is a warm "archive" theme: parchment surfaces, an ink text ramp, copper for actions,
+and verdigris reserved for verified and AI-match signals. Dark mode is an authored second theme, not
+an inversion. Tokens live in `app/globals.css`.
+
+| Route | Surface |
+| --- | --- |
+| `/` | Landing and auth. The proof artifact shows the token swap: the AI matches against opaque tokens while the credential stays sealed. |
+| `/unlock` | Master password unlock. The key exists only in that tab, in memory. |
+| `/vault` | The vault: AI search bar, filters, dense item list, and an item inspector and editor. |
+| `/vault/settings` | Configure: local vs cloud mode, BYOK providers, and account access. |
+| `/vault/security` | Monitor: active sessions and the audit timeline. |
+| `/vault/trash` | Restore or purge, with confirmation that names the item. |
+
+Design rules the interface follows: the 1-4-9 spacing rhythm, three depth planes, 60-76 character
+measure on prose, `:focus-visible` rings that are never removed, real labels on every field, submit
+enabled until the request starts and a spinner that keeps its label, no state carried by colour
+alone, and copy with no em dashes, no exclamation points, and one verb per button.
+
+---
+
 ## Project layout
 
 ```
-app/api/            route handlers (auth, vault, ai, pwned, health)
+app/                pages and route handlers (auth, vault, ai, pwned, health)
+components/ui/      design-system primitives (button, field, overlay, controls, data, feedback)
+components/app/     product components (shell, vault, item, search, settings, security, trash)
+components/brand/   landing surface pieces
+lib/client/         browser layer: typed API client, KDF/AEAD item crypto, session + vault providers
 lib/crypto/         KDF, key split, AEAD envelopes, vault key, tokenization
 lib/auth/           sessions, password hashing, audit log, guard, CSRF
-lib/db/             Drizzle schema, client, types, migrations
+lib/db/             Drizzle schema, client, embedded dev database, types, migrations
 lib/vault/          item + folder services and schemas
 lib/ai/             provider presets, BYOK storage, resolver, search
 lib/hibp/           Pwned Passwords proxy with caching
@@ -120,6 +152,8 @@ docs/API.md         full endpoint reference
 ```
 
 Every route handler authenticates itself via `requireAuth`; `proxy.ts` only sets security headers.
+Item ciphertext binds to its item through AAD (`ahaai:item:v1:<itemId>:<field>`), which is why the
+client generates the item id and sends it at create time.
 
 ---
 
@@ -145,6 +179,8 @@ Every route handler authenticates itself via `requireAuth`; `proxy.ts` only sets
 - Two-factor authentication (TOTP is the natural next step).
 - Organizations, collections, sharing, attachments.
 - Streaming chat over the vault (search currently returns matched items only).
-- A UI.
+- Browser verification below 1024px. The automation CLI used exposes no viewport control, so narrow
+  reflow was reviewed in code (logical properties, no fixed widths, 1rem inputs under 640px) rather
+  than on screen. Desktop at 1264px and the dark theme were verified in a real browser.
 
 See [`docs/API.md`](./docs/API.md) for the endpoint reference.

@@ -15,7 +15,14 @@ export interface ProviderPreset {
   baseUrl?: string;
   defaultModels: string[];
   isLocal: boolean;
+  /** A key must be supplied before this provider can be used. */
   requiresKey: boolean;
+  /**
+   * The key is not required, but the endpoint may still expect one, so the
+   * field is offered. Custom endpoints cover both kinds: a local box with no
+   * auth, and a hosted gateway that rejects anything unauthenticated.
+   */
+  keyOptional: boolean;
   /** Env var used as a fallback credential for self-hosted installs. */
   envKey?: string;
 }
@@ -28,6 +35,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["gpt-4o", "gpt-4o-mini"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "OPENAI_API_KEY",
   },
   {
@@ -37,6 +45,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "ANTHROPIC_API_KEY",
   },
   {
@@ -46,6 +55,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["gemini-2.0-flash", "gemini-1.5-pro"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
   },
   {
@@ -56,6 +66,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "OPENROUTER_API_KEY",
   },
   {
@@ -65,6 +76,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "GROQ_API_KEY",
   },
   {
@@ -74,6 +86,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["mistral-large-latest", "mistral-small-latest"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "MISTRAL_API_KEY",
   },
   {
@@ -84,6 +97,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["deepseek-chat", "deepseek-reasoner"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "DEEPSEEK_API_KEY",
   },
   {
@@ -94,6 +108,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["grok-2-latest", "grok-2-mini"],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "XAI_API_KEY",
   },
   {
@@ -103,6 +118,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: [],
     isLocal: false,
     requiresKey: true,
+    keyOptional: false,
     envKey: "AZURE_API_KEY",
   },
   {
@@ -113,6 +129,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["llama3.2", "qwen2.5"],
     isLocal: true,
     requiresKey: false,
+    keyOptional: false,
   },
   {
     id: "lmstudio",
@@ -122,6 +139,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: ["local-model"],
     isLocal: true,
     requiresKey: false,
+    keyOptional: false,
   },
   {
     id: "vllm",
@@ -131,6 +149,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: [],
     isLocal: true,
     requiresKey: false,
+    keyOptional: false,
   },
   {
     id: "custom-openai",
@@ -139,6 +158,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModels: [],
     isLocal: false,
     requiresKey: false,
+    keyOptional: true,
   },
 ];
 

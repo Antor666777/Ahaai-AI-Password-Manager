@@ -85,6 +85,7 @@ export async function getItem(
 }
 
 export interface CreateItemInput {
+  id?: string;
   type: ItemType;
   nameEnc: string;
   notesEnc?: string | null;
@@ -103,19 +104,19 @@ export async function createItem(
     await assertFolderOwnership(db, userId, input.folderId);
   }
 
-  const [item] = await db
-    .insert(items)
-    .values({
-      userId,
-      type: input.type,
-      nameEnc: input.nameEnc,
-      notesEnc: input.notesEnc ?? null,
-      dataEnc: input.dataEnc,
-      folderId: input.folderId ?? null,
-      favorite: input.favorite ?? false,
-      reprompt: input.reprompt ?? false,
-    })
-    .returning();
+  const values: typeof items.$inferInsert = {
+    userId,
+    type: input.type,
+    nameEnc: input.nameEnc,
+    notesEnc: input.notesEnc ?? null,
+    dataEnc: input.dataEnc,
+    folderId: input.folderId ?? null,
+    favorite: input.favorite ?? false,
+    reprompt: input.reprompt ?? false,
+  };
+  if (input.id) values.id = input.id;
+
+  const [item] = await db.insert(items).values(values).returning();
 
   return item;
 }

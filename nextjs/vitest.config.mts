@@ -15,6 +15,10 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // A shell that exports NODE_ENV=production would otherwise run the suite
+    // against production React, which has no act(), and change cookie and CSP
+    // semantics. Tests define their own environment.
+    env: { NODE_ENV: "test" },
     setupFiles: ["./test/setup-env.ts"],
     include: ["**/*.test.ts", "**/*.test.tsx"],
     exclude: ["node_modules/**", ".next/**"],

@@ -183,18 +183,25 @@ export async function updateAiSettings(
 ): Promise<SettingsView> {
   await ensureSettings(db, userId);
 
-  if (input.defaultProviderId) {
-    // Throws if the provider is not owned by this user.
-    await getProvider(db, userId, input.defaultProviderId);
-  }
-
   const patch: Partial<typeof userSettings.$inferInsert> = {
     updatedAt: new Date(),
   };
-  if (input.aiMode !== undefined) patch.aiMode = input.aiMode;
-  if (input.defaultProviderId !== undefined) {
-    patch.defaultProviderId = input.defaultProviderId;
+
+  if (input.defaultProviderId) {
+    // Throws if the provider is not owned by this user.
+    const provider = await getProvider(db, userId, input.defaultProviderId);
+    patch.defaultProviderId = provider.id;
+    // Picking a default also decides where searches travel, so the mode follows
+    // the provider. Otherwise the pair can be left in a state no search can
+    // satisfy, which reads as a broken app rather than a missing setting.
+    if (input.aiMode === undefined) {
+      patch.aiMode = provider.isLocal ? "local" : "cloud";
+    }
+  } else if (input.defaultProviderId === null) {
+    patch.defaultProviderId = null;
   }
+
+  if (input.aiMode !== undefined) patch.aiMode = input.aiMode;
 
   await db.update(userSettings).set(patch).where(eq(userSettings.userId, userId));
   return getSettings(db, userId);

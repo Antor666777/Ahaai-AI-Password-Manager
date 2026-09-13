@@ -14,6 +14,10 @@ export async function GET(request: Request) {
       user: toPublicUser(user),
       session: toPublicSession(session, session.id),
       settings: toSettingsView(settings),
+      vault: {
+        protectedVaultKey: user.protectedVaultKey,
+        kdfParams: user.kdfParams,
+      },
     });
   } catch (error) {
     return jsonError(error, { route: "auth/session" });

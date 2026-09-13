@@ -76,7 +76,7 @@ describe("resolveLanguageModel", () => {
     expect(resolved.modelId).toBe("gpt-4o-mini");
   });
 
-  it("refuses a mode that does not match the provider locality", async () => {
+  it("treats an explicit provider that contradicts the mode as a preference", async () => {
     const user = await createTestUser(ctx.db, { email: "res5@example.com" });
     const cloud = await createProvider(ctx.db, user.id, {
       presetId: "openai",
@@ -88,13 +88,17 @@ describe("resolveLanguageModel", () => {
       label: "local",
     });
 
-    await expect(
-      resolveLanguageModel(ctx.db, user.id, { providerId: cloud.id, mode: "local" }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const localPick = await resolveLanguageModel(ctx.db, user.id, {
+      providerId: cloud.id,
+      mode: "local",
+    });
+    expect(localPick.presetId).toBe("ollama");
 
-    await expect(
-      resolveLanguageModel(ctx.db, user.id, { providerId: local.id, mode: "cloud" }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const cloudPick = await resolveLanguageModel(ctx.db, user.id, {
+      providerId: local.id,
+      mode: "cloud",
+    });
+    expect(cloudPick.presetId).toBe("openai");
   });
 
   it("does not resolve another user's provider", async () => {
@@ -109,5 +113,66 @@ describe("resolveLanguageModel", () => {
     await expect(
       resolveLanguageModel(ctx.db, bob.id, { providerId: provider.id }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("picks a local provider when the default is hosted and the mode is local", async () => {
+    const user = await createTestUser(ctx.db, { email: "res-mode-a@example.com" });
+    const hosted = await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "hosted",
+      apiKey: "sk-test",
+    });
+    await createProvider(ctx.db, user.id, { presetId: "ollama", label: "local" });
+    await updateAiSettings(ctx.db, user.id, { defaultProviderId: hosted.id });
+
+    const resolved = await resolveLanguageModel(ctx.db, user.id, {
+      mode: "local",
+    });
+    expect(resolved.isLocal).toBe(true);
+    expect(resolved.presetId).toBe("ollama");
+  });
+
+  it("explains what is missing when local mode has no local provider", async () => {
+    const user = await createTestUser(ctx.db, { email: "res-mode-b@example.com" });
+    const hosted = await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "hosted",
+      apiKey: "sk-test",
+    });
+    await updateAiSettings(ctx.db, user.id, { defaultProviderId: hosted.id });
+
+    let failure: { message?: string; details?: unknown } = {};
+    try {
+      await resolveLanguageModel(ctx.db, user.id, { mode: "local" });
+    } catch (caught) {
+      failure = caught as { message?: string; details?: unknown };
+    }
+
+    expect(failure.message).toMatch(/no local provider is set up/i);
+    expect(failure.details).toMatchObject({
+      reason: "no_matching_provider",
+      mode: "local",
+      alternativeMode: "cloud",
+    });
+  });
+
+  it("picks a hosted provider when the default is local and the mode is cloud", async () => {
+    const user = await createTestUser(ctx.db, { email: "res-mode-c@example.com" });
+    const local = await createProvider(ctx.db, user.id, {
+      presetId: "ollama",
+      label: "local",
+    });
+    await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "hosted",
+      apiKey: "sk-test",
+    });
+    await updateAiSettings(ctx.db, user.id, { defaultProviderId: local.id });
+
+    const resolved = await resolveLanguageModel(ctx.db, user.id, {
+      mode: "cloud",
+    });
+    expect(resolved.isLocal).toBe(false);
+    expect(resolved.presetId).toBe("openai");
   });
 });

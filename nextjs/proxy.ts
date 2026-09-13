@@ -1,8 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+const isDevelopment = process.env.NODE_ENV !== "production";
+
+// React needs eval() for its development-only debugging features. Production
+// keeps the strict policy.
+const SCRIPT_SRC = isDevelopment
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'";
+
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  SCRIPT_SRC,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",

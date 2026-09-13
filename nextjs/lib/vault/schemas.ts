@@ -14,6 +14,8 @@ export const itemTypeSchema = z.enum([
 ]);
 
 export const createItemSchema = z.object({
+  /** Client-generated so per-item AAD can bind ciphertext to the item. */
+  id: uuidSchema.optional(),
   type: itemTypeSchema,
   nameEnc: envelopeSchema,
   notesEnc: envelopeSchema.nullable().optional(),
