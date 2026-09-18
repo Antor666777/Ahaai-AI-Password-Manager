@@ -1,0 +1,1 @@
+ALTER TABLE "ai_providers" ADD COLUMN "zero_data_retention" boolean DEFAULT true NOT NULL;

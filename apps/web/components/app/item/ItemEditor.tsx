@@ -1,9 +1,9 @@
 "use client";
 
 import { useId, useRef, useState, type FormEvent } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, IconButton } from "@/components/ui/button";
 import { Switch } from "@/components/ui/controls";
-import { Callout } from "@/components/ui/feedback";
+import { Badge, Callout } from "@/components/ui/feedback";
 import {
   PasswordField,
   SelectField,
@@ -11,11 +11,17 @@ import {
   TextInput,
 } from "@/components/ui/field";
 import { Dialog } from "@/components/ui/overlay";
+import { CloseIcon, TagIcon } from "@/components/app/shell/Icons";
 import { ApiError } from "@/lib/client/api";
 import { generatePassword } from "@/lib/client/crypto";
 import { useToast } from "@/lib/client/toast";
 import { useVault, type ItemDraft } from "@/lib/client/vault";
-import type { DecryptedItem, ItemType } from "@/lib/client/types";
+import type {
+  CustomField,
+  DecryptedItem,
+  DecryptedTag,
+  ItemType,
+} from "@/lib/client/types";
 import {
   ITEM_TYPES,
   buildPayload,
@@ -27,6 +33,7 @@ import {
   typeLabel,
   type DraftFields,
 } from "./meta";
+import { CustomFieldsEditor } from "./CustomFieldsEditor";
 
 export interface ItemEditorProps {
   /** Null creates a new item; an item edits it in place. */
@@ -49,7 +56,6 @@ export function ItemEditor({
   const toast = useToast();
   const formId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
-  const custom = item ? customFieldsOf(item) : [];
 
   const [fields, setFields] = useState<DraftFields>(() =>
     item
@@ -59,6 +65,21 @@ export function ItemEditor({
           folderId: defaultFolderId ?? "",
         },
   );
+  // Custom fields live on the login payload only, so the array is held here and
+  // handed back to buildPayload on save. Seeded from the item being edited.
+  const [custom, setCustom] = useState<CustomField[]>(() =>
+    item ? customFieldsOf(item) : [],
+  );
+  // Tag ids are held outside DraftFields because the draft field is optional:
+  // an item with no tags must omit it rather than send an empty array. The order
+  // the user added them in is the order they are kept in.
+  const [tagIds, setTagIds] = useState<string[]>(() => item?.tagIds ?? []);
+  const [tagInput, setTagInput] = useState("");
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [tagBusy, setTagBusy] = useState(false);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  const tagListId = useId();
+  const tagHeadingId = useId();
   const [nameError, setNameError] = useState<string | null>(null);
   const [totpError, setTotpError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -68,6 +89,60 @@ export function ItemEditor({
 
   function update<K extends keyof DraftFields>(key: K, value: DraftFields[K]) {
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  // An assigned id whose tag no longer exists (a stale reference) renders no
+  // chip, but stays on the list so an unrelated save does not quietly drop it.
+  const tagsById = new Map(vault.tags.map((tag) => [tag.id, tag]));
+  const visibleTags = tagIds
+    .map((id) => tagsById.get(id))
+    .filter((tag): tag is DecryptedTag => tag !== undefined);
+
+  function removeTag(id: string) {
+    setTagIds((current) => current.filter((tagId) => tagId !== id));
+  }
+
+  /**
+   * Adds the typed tag. An existing tag is reused when the name matches
+   * case-insensitively (and re-adding one already on the item is a no-op, so a
+   * tag can never appear twice); otherwise the tag is created. On a create
+   * failure the typed name is kept so a retry does not lose it.
+   */
+  async function addTag() {
+    const name = tagInput.trim();
+    if (name.length === 0 || tagBusy) return;
+
+    const existing = vault.tags.find(
+      (tag) => tag.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      setTagIds((current) =>
+        current.includes(existing.id) ? current : [...current, existing.id],
+      );
+      setTagInput("");
+      setTagError(null);
+      return;
+    }
+
+    setTagBusy(true);
+    try {
+      const created = await vault.createTag(name);
+      setTagIds((current) =>
+        current.includes(created.id) ? current : [...current, created.id],
+      );
+      setTagInput("");
+      setTagError(null);
+    } catch (caught) {
+      const message =
+        caught instanceof Error
+          ? caught.message
+          : "The tag was not created. Try again in a moment.";
+      setTagError(message);
+      toast.error("Tag was not created", message);
+      tagInputRef.current?.focus();
+    } finally {
+      setTagBusy(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -91,14 +166,31 @@ export function ItemEditor({
     }
     setTotpError(null);
 
+    // A row with no label is an abandoned "Add field" click, so it is dropped on
+    // save rather than stored as a blank custom field. Labels are trimmed to
+    // match how the built-in fields are normalized.
+    const customFields = custom
+      .filter((field) => field.label.trim().length > 0)
+      .map((field) => ({ ...field, label: field.label.trim() }));
+
     const draft: ItemDraft = {
       type: fields.type,
       name,
       notes: fields.notes,
-      data: buildPayload(fields, custom),
+      data: buildPayload(fields, customFields),
       folderId: fields.folderId === "" ? null : fields.folderId,
       favorite: fields.favorite,
+      reprompt: fields.reprompt,
     };
+
+    // Omit `tagIds` when the item ends up with none so an unrelated edit cannot
+    // clear tags the server still holds; only clear them when the user actually
+    // removed the last tag from an item that had some.
+    if (tagIds.length > 0) {
+      draft.tagIds = tagIds;
+    } else if ((item?.tagIds.length ?? 0) > 0) {
+      draft.tagIds = [];
+    }
 
     setSaving(true);
     try {
@@ -251,6 +343,12 @@ export function ItemEditor({
                   disabled={saving}
                   onChange={(event) => update("urls", event.target.value)}
                 />
+
+                <CustomFieldsEditor
+                  fields={custom}
+                  onChange={setCustom}
+                  disabled={saving}
+                />
               </>
             ) : null}
 
@@ -366,12 +464,97 @@ export function ItemEditor({
               ))}
             </SelectField>
 
+            <div role="group" aria-labelledby={tagHeadingId} className="space-y-2">
+              <div className="space-y-0.5">
+                <p id={tagHeadingId} className="text-[13px] font-medium text-ink">
+                  Tags
+                </p>
+                <p className="text-[12.5px] leading-snug text-ink-faint">
+                  Group items so you can filter them later. Type a name and pick
+                  one you already use, or create a new one.
+                </p>
+              </div>
+
+              {visibleTags.length > 0 ? (
+                <ul className="flex flex-wrap gap-2">
+                  {visibleTags.map((tag) => (
+                    <li key={tag.id}>
+                      <Badge tone="neutral" className="gap-1 pe-0 ps-2.5">
+                        <TagIcon className="size-3" />
+                        {tag.name}
+                        <IconButton
+                          label={`Remove tag ${tag.name}`}
+                          size="sm"
+                          disabled={saving}
+                          onClick={() => removeTag(tag.id)}
+                          className="hover:text-danger"
+                        >
+                          <CloseIcon className="size-3.5" />
+                        </IconButton>
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[12.5px] text-ink-faint">No tags yet.</p>
+              )}
+
+              <div className="flex items-end gap-2">
+                <TextInput
+                  ref={tagInputRef}
+                  list={tagListId}
+                  label="Add a tag"
+                  name="tag"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Work"
+                  value={tagInput}
+                  disabled={saving || tagBusy}
+                  error={tagError}
+                  className="min-w-0 flex-1"
+                  onChange={(event) => {
+                    setTagInput(event.target.value);
+                    if (tagError) setTagError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    // Enter would otherwise submit the whole item; here it adds
+                    // the tag and leaves the rest of the form alone.
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void addTag();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  disabled={saving || tagBusy || tagInput.trim().length === 0}
+                  loading={tagBusy}
+                  onClick={() => void addTag()}
+                >
+                  Add tag
+                </Button>
+              </div>
+              <datalist id={tagListId}>
+                {vault.tags.map((tag) => (
+                  <option key={tag.id} value={tag.name} />
+                ))}
+              </datalist>
+            </div>
+
             <Switch
               label="Add to favorites"
               description="Shows up first when you browse the vault."
               checked={fields.favorite}
               disabled={saving}
               onChange={(checked) => update("favorite", checked)}
+            />
+
+            <Switch
+              label="Require the master password to reveal secrets"
+              description="Ahaai asks for it again before it shows this item's passwords and codes."
+              checked={fields.reprompt}
+              disabled={saving}
+              onChange={(checked) => update("reprompt", checked)}
             />
 
             <TextArea

@@ -139,6 +139,7 @@ export function openItem(vaultKey: Uint8Array, item: ApiItem): DecryptedItem {
     notes,
     data,
     folderId: item.folderId,
+    tagIds: item.tagIds,
     favorite: item.favorite,
     reprompt: item.reprompt,
     revision: item.revision,
@@ -229,6 +230,27 @@ export async function rewrapForNewPassword(
     authHash: rewrapped.authHash,
     kdfParams,
     protectedVaultKey: rewrapped.protectedVaultKey,
+  };
+}
+
+/**
+ * Re-wraps the SAME vault key under the SAME password with a new email
+ * binding. The envelope is AAD-bound to the normalized address, so changing the
+ * email without re-wrapping leaves a key that only unwraps against the old
+ * address, which fails at unlock with a GCM tag error. The KDF params are the
+ * ones already on the account: reusing them keeps the derived enc key, and
+ * therefore the stored auth hash, unchanged.
+ */
+export async function rewrapForNewEmail(
+  vaultKey: Uint8Array,
+  password: string,
+  newEmail: string,
+  kdfParams: KdfParams,
+): Promise<{ protectedVaultKey: string }> {
+  const masterKey = await deriveMasterKey(password, kdfParams);
+  const { encKey } = splitMasterKey(masterKey);
+  return {
+    protectedVaultKey: wrapVaultKey(vaultKey, encKey, binding(newEmail)),
   };
 }
 

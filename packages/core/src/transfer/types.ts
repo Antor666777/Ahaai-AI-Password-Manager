@@ -52,6 +52,10 @@ export interface TransferRecord {
   payload: ItemPayloadLike;
   /** Source folder / group / tag, when the export carries one. */
   folder?: string;
+  /** Tags the source export carried. 1Password has a Tags column. */
+  tags?: string[];
+  /** Bitwarden's "require master password before revealing" flag. */
+  reprompt?: boolean;
   favorite?: boolean;
 }
 

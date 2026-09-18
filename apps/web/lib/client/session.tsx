@@ -29,6 +29,12 @@ export type SessionStatus = "loading" | "anonymous" | "authenticated" | "error";
 const AUTO_LOCK_MS = 5 * 60 * 1000;
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
 
+/**
+ * How long a successful master-password check keeps a reprompt satisfied. Kept
+ * in memory only, so it is gone on reload and never outlives the tab.
+ */
+export const REPROMPT_GRACE_MS = 2 * 60 * 1000;
+
 interface SessionValue {
   status: SessionStatus;
   /** Set when `status` is `error`, so the retry screen can say what failed. */
@@ -47,6 +53,15 @@ interface SessionValue {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setSettings: (settings: ApiSettings) => void;
+  /**
+   * Re-checks the master password in the browser and, on success, opens a short
+   * grace window during which a reprompt may reveal a secret without asking
+   * again. Resolves false on a wrong password; rejects only on a real failure
+   * (network, rate limit, a lost session).
+   */
+  verifyMasterPassword: (password: string) => Promise<boolean>;
+  /** True while inside the grace window opened by a successful verification. */
+  hasRepromptAccess: () => boolean;
 }
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -66,6 +81,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<ApiSettings | null>(null);
   const [vaultMaterial, setVaultMaterial] = useState<ApiVaultKey | null>(null);
   const [vaultKey, setVaultKey] = useState<Uint8Array | null>(null);
+  // When the master password was last confirmed, in memory only. Null until a
+  // verification succeeds; reset whenever the session it belongs to ends.
+  const [repromptVerifiedAt, setRepromptVerifiedAt] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +100,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setSettings(null);
         setVaultMaterial(null);
         setVaultKey(null);
+        setRepromptVerifiedAt(null);
         setError(null);
         setStatus("anonymous");
         return;
@@ -114,6 +133,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setVaultMaterial(result.vault);
     // Registration already produced the vault key, so the vault opens unlocked.
     setVaultKey(material.vaultKey);
+    setRepromptVerifiedAt(null);
     setError(null);
     setStatus("authenticated");
     const session = await api.session();
@@ -127,6 +147,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(result.user);
     setVaultMaterial(result.vault);
     setVaultKey(null);
+    setRepromptVerifiedAt(null);
     setError(null);
     setStatus("authenticated");
     const session = await api.session();
@@ -190,9 +211,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setSettings(null);
     setVaultMaterial(null);
     setVaultKey(null);
+    setRepromptVerifiedAt(null);
     setError(null);
     setStatus("anonymous");
   }, []);
+
+  const verifyMasterPassword = useCallback(
+    async (password: string): Promise<boolean> => {
+      if (!user || !vaultMaterial) {
+        throw new Error("Sign in again before checking the master password.");
+      }
+      const authHash = await deriveAuthHash(password, vaultMaterial.kdfParams);
+      try {
+        await api.verifyMasterPassword(authHash);
+        setRepromptVerifiedAt(Date.now());
+        return true;
+      } catch (caught) {
+        // A wrong password is a normal answer, not a failure to surface. Any
+        // other status (rate limit, network, a dead session) is a real error.
+        if (caught instanceof ApiError && caught.status === 401) {
+          return false;
+        }
+        throw caught;
+      }
+    },
+    [user, vaultMaterial],
+  );
+
+  const hasRepromptAccess = useCallback((): boolean => {
+    if (repromptVerifiedAt === null) return false;
+    return Date.now() - repromptVerifiedAt < REPROMPT_GRACE_MS;
+  }, [repromptVerifiedAt]);
 
   const value = useMemo<SessionValue>(
     () => ({
@@ -210,6 +259,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       logout,
       refresh,
       setSettings,
+      verifyMasterPassword,
+      hasRepromptAccess,
     }),
     [
       status,
@@ -224,6 +275,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       lock,
       logout,
       refresh,
+      verifyMasterPassword,
+      hasRepromptAccess,
     ],
   );
 

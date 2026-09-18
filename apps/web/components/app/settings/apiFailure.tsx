@@ -68,7 +68,13 @@ export function failureCopy(failure: ApiFailure, fallback: string): string {
         ? "Too many requests came from this account. Wait a minute, then try again."
         : `Too many requests came from this account. Wait ${failure.retryAfterSeconds} seconds, then try again.`;
     case "UPSTREAM":
-      return "The provider did not answer. Check the API key and the base URL, then test the connection again.";
+      // The server attaches the provider's own reason when it has one, which
+      // beats guessing about the key or the base URL. The generic line is only
+      // for a failure that arrived without an explanation.
+      return (
+        failure.serverMessage ??
+        "The provider did not answer. Check the API key and the base URL, then test the connection again."
+      );
     case "NOT_FOUND":
       return "That record is no longer in this account. Reload the page, then try again.";
     case "CONFLICT":

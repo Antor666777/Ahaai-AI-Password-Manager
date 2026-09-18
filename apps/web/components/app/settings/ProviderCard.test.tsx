@@ -15,6 +15,7 @@ const provider: ApiProvider = {
   baseUrl: "https://gateway.example.com/v1",
   defaultModel: "gpt-4o-mini",
   isLocal: false,
+  zeroDataRetention: true,
   hasApiKey: false,
   apiKeyMask: null,
   createdAt: "2026-01-01T00:00:00.000Z",

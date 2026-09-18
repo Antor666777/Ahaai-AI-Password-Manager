@@ -5,7 +5,15 @@ export type ProviderKind =
   | "openai-compatible"
   | "azure"
   | "groq"
-  | "mistral";
+  | "mistral"
+  | "gateway";
+
+/**
+ * What a provider is for. Language models generate text; evaluation models
+ * answer typed questions about one shared state. A search picks whichever the
+ * request can use, and the two never stand in for each other.
+ */
+export type ProviderCapability = "language" | "evaluation";
 
 export interface ProviderPreset {
   id: string;
@@ -25,7 +33,10 @@ export interface ProviderPreset {
   keyOptional: boolean;
   /** Env var used as a fallback credential for self-hosted installs. */
   envKey?: string;
+  /** Defaults to `language` when omitted. */
+  capability?: ProviderCapability;
 }
+
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -122,6 +133,17 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     envKey: "AZURE_API_KEY",
   },
   {
+    id: "vercel-gateway",
+    label: "Vercel AI Gateway (decision model)",
+    kind: "gateway",
+    defaultModels: ["typesafe-ai/jev"],
+    isLocal: false,
+    requiresKey: true,
+    keyOptional: false,
+    envKey: "AI_GATEWAY_API_KEY",
+    capability: "evaluation",
+  },
+  {
     id: "ollama",
     label: "Ollama (local)",
     kind: "openai-compatible",
@@ -170,4 +192,17 @@ export function getPreset(id: string): ProviderPreset | undefined {
 
 export function listPresets(): ProviderPreset[] {
   return PROVIDER_PRESETS;
+}
+
+/** A preset with no capability declared is a language model. */
+export function presetCapability(preset: ProviderPreset): ProviderCapability {
+  return preset.capability ?? "language";
+}
+
+export function isLanguagePreset(preset: ProviderPreset): boolean {
+  return presetCapability(preset) === "language";
+}
+
+export function isEvaluationPreset(preset: ProviderPreset): boolean {
+  return presetCapability(preset) === "evaluation";
 }

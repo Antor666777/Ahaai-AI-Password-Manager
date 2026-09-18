@@ -243,6 +243,36 @@ export function HealthIcon({ className }: IconProps) {
   );
 }
 
+export function HistoryIcon({ className }: IconProps) {
+  return (
+    <Glyph className={className}>
+      <path d="M3.4 10a6.6 6.6 0 1 0 1.9-4.6" {...STROKE} />
+      <path d="M3.1 3.5v3.5h3.5" {...STROKE} />
+      <path d="M10 6.8V10l2.5 1.7" {...STROKE} />
+    </Glyph>
+  );
+}
+
+export function TagIcon({ className }: IconProps) {
+  return (
+    <Glyph className={className}>
+      <path
+        d="M3.6 9.2V4.6a1 1 0 0 1 1-1h4.6a1 1 0 0 1 .7.3l6.1 6.1a1 1 0 0 1 0 1.4l-4.5 4.5a1 1 0 0 1-1.4 0L3.9 9.9a1 1 0 0 1-.3-.7Z"
+        {...STROKE}
+      />
+      <circle cx="7.1" cy="7.1" r="1.2" {...STROKE} />
+    </Glyph>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <Glyph className={className}>
+      <path d="M4.6 10.4 8.2 14l7.2-8" {...STROKE} />
+    </Glyph>
+  );
+}
+
 export function EyeIcon({ className }: IconProps) {
   return (
     <Glyph className={className}>

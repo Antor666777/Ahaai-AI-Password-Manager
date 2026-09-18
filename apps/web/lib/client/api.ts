@@ -5,9 +5,11 @@ import type {
   ApiFolder,
   ApiItem,
   ApiProvider,
+  ApiRevision,
   ApiSearchResult,
   ApiSessionInfo,
   ApiSettings,
+  ApiTag,
   ApiUser,
   ApiVaultKey,
   KdfParams,
@@ -138,10 +140,35 @@ export const api = {
       { method: "POST", body: json(input) },
     ),
 
+  verifyMasterPassword: (authHash: string) =>
+    request<{ ok: true }>("/auth/verify", {
+      method: "POST",
+      body: json({ authHash }),
+    }),
+
+  changeEmail: (input: { email: string; protectedVaultKey: string }) =>
+    request<{ user: ApiUser; revokedSessions: number }>("/auth/email", {
+      method: "POST",
+      body: json(input),
+    }),
+
+  deleteAccount: (authHash: string) =>
+    request<{ deleted: true }>("/auth/account", {
+      method: "DELETE",
+      body: json({ authHash }),
+    }),
+
   sessions: () => request<{ sessions: ApiSessionInfo[] }>("/auth/sessions"),
 
   revokeSession: (id: string) =>
     request<{ ok: true }>(`/auth/sessions/${id}`, { method: "DELETE" }),
+
+  /** Revokes every session, optionally including the caller's own. */
+  revokeAllSessions: (input?: { includeCurrent?: boolean }) =>
+    request<{ revoked: number }>("/auth/sessions/revoke-all", {
+      method: "POST",
+      body: json(input ?? {}),
+    }),
 
   events: (params?: { limit?: number; before?: string }) =>
     request<{ events: ApiAuditEvent[]; nextCursor: string | null }>(
@@ -153,6 +180,7 @@ export const api = {
     cursor?: string;
     type?: string;
     folderId?: string;
+    tagId?: string;
     favorite?: boolean;
     includeTrashed?: boolean;
   }) =>
@@ -162,6 +190,11 @@ export const api = {
 
   item: (id: string) => request<{ item: ApiItem }>(`/vault/items/${id}`),
 
+  itemRevisions: (id: string, params?: { limit?: number }) =>
+    request<{ revisions: ApiRevision[] }>(
+      `/vault/items/${id}/revisions${query(params)}`,
+    ),
+
   createItem: (input: {
     id?: string;
     type: string;
@@ -169,6 +202,7 @@ export const api = {
     notesEnc?: string | null;
     dataEnc: string;
     folderId?: string | null;
+    tagIds?: string[];
     favorite?: boolean;
     reprompt?: boolean;
   }) =>
@@ -186,6 +220,7 @@ export const api = {
       notesEnc?: string | null;
       dataEnc: string;
       folderId?: string | null;
+      tagIds?: string[];
       favorite?: boolean;
       reprompt?: boolean;
     }[],
@@ -203,6 +238,7 @@ export const api = {
       notesEnc?: string | null;
       dataEnc?: string;
       folderId?: string | null;
+      tagIds?: string[];
       favorite?: boolean;
       reprompt?: boolean;
     },
@@ -240,6 +276,35 @@ export const api = {
   deleteFolder: (id: string) =>
     request<{ ok: true }>(`/vault/folders/${id}`, { method: "DELETE" }),
 
+  tags: () => request<{ tags: ApiTag[] }>("/vault/tags"),
+
+  createTag: (nameEnc: string) =>
+    request<{ tag: ApiTag }>("/vault/tags", {
+      method: "POST",
+      body: json({ nameEnc }),
+    }),
+
+  renameTag: (id: string, nameEnc: string) =>
+    request<{ tag: ApiTag }>(`/vault/tags/${id}`, {
+      method: "PATCH",
+      body: json({ nameEnc }),
+    }),
+
+  deleteTag: (id: string) =>
+    request<{ ok: true }>(`/vault/tags/${id}`, { method: "DELETE" }),
+
+  /** One request for a whole multi-select action instead of one per item. */
+  bulkUpdateItems: (input: {
+    action: "trash" | "restore" | "destroy" | "favorite" | "move";
+    ids: string[];
+    favorite?: boolean;
+    folderId?: string | null;
+  }) =>
+    request<{ items: ApiItem[] }>("/vault/items/bulk-update", {
+      method: "POST",
+      body: json(input),
+    }),
+
   providers: () =>
     request<{ providers: ApiProvider[]; presets: ProviderPreset[] }>(
       "/ai/providers",
@@ -251,6 +316,7 @@ export const api = {
     apiKey?: string | null;
     baseUrl?: string | null;
     defaultModel?: string | null;
+    zeroDataRetention?: boolean;
   }) =>
     request<{ provider: ApiProvider }>("/ai/providers", {
       method: "POST",
@@ -264,6 +330,7 @@ export const api = {
       apiKey?: string | null;
       baseUrl?: string | null;
       defaultModel?: string | null;
+      zeroDataRetention?: boolean;
     },
   ) =>
     request<{ provider: ApiProvider }>(`/ai/providers/${id}`, {

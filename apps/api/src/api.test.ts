@@ -146,6 +146,166 @@ describe("auth routes", () => {
   });
 });
 
+describe("account lifecycle and session admin", () => {
+  it("signs out other devices while this one stays signed in", async () => {
+    const credentials = await registrationBody("api-revoke-all@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+
+    // A second live session, as an extension would hold.
+    const issued = await post("/api/v1/auth/token", {
+      email: credentials.email,
+      authHash: credentials.authHash,
+    });
+    expect(issued.status).toBe(200);
+
+    const revoked = await post("/api/v1/auth/sessions/revoke-all", {}, { cookie });
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).revoked).toBe(1);
+    // The caller kept its own session, so no cookie is cleared.
+    expect(revoked.headers.get("set-cookie")).toBeNull();
+
+    const list = (await (await get("/api/v1/auth/sessions", { cookie })).json())
+      .sessions;
+    expect(list).toHaveLength(1);
+    expect(list[0].current).toBe(true);
+  });
+
+  it("ends this session too when includeCurrent is set", async () => {
+    const cookie = await registerAndGetCookie("api-revoke-current@example.com");
+
+    const revoked = await post(
+      "/api/v1/auth/sessions/revoke-all",
+      { includeCurrent: true },
+      { cookie },
+    );
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).revoked).toBe(1);
+    expect(revoked.headers.get("set-cookie")).toContain("Max-Age=0");
+
+    const after = await get("/api/v1/auth/session", { cookie });
+    expect(after.status).toBe(401);
+  });
+
+  it("confirms the master password and rejects a wrong one generically", async () => {
+    const credentials = await registrationBody("api-verify@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+
+    const good = await post(
+      "/api/v1/auth/verify",
+      { authHash: credentials.authHash },
+      { cookie },
+    );
+    expect(good.status).toBe(200);
+    expect((await good.json()).ok).toBe(true);
+
+    const bad = await post(
+      "/api/v1/auth/verify",
+      { authHash: "0".repeat(64) },
+      { cookie },
+    );
+    expect(bad.status).toBe(401);
+    const body = await bad.json();
+    expect(body.error.code).toBe("UNAUTHORIZED");
+    // Nothing about the account leaks in the failure.
+    expect(JSON.stringify(body)).not.toContain(credentials.email);
+  });
+
+  it("rate limits repeated master password checks", async () => {
+    const credentials = await registrationBody("api-verify-limit@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+
+    let status = 0;
+    for (let i = 0; i < 12; i += 1) {
+      const response = await post(
+        "/api/v1/auth/verify",
+        { authHash: "0".repeat(64) },
+        { cookie },
+      );
+      status = response.status;
+      if (status === 429) break;
+    }
+    expect(status).toBe(429);
+  });
+
+  it("changes the email, signs out other devices and keeps this one", async () => {
+    const credentials = await registrationBody("api-email-old@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+    await post("/api/v1/auth/token", {
+      email: credentials.email,
+      authHash: credentials.authHash,
+    });
+
+    const changed = await post(
+      "/api/v1/auth/email",
+      { email: "api-email-new@example.com", protectedVaultKey: ENVELOPE },
+      { cookie },
+    );
+    expect(changed.status).toBe(200);
+    const body = await changed.json();
+    expect(body.user.email).toBe("api-email-new@example.com");
+    expect(body.revokedSessions).toBe(1);
+    expect(JSON.stringify(body)).not.toContain("authHash");
+
+    // The re-wrap still leaves this device signed in.
+    expect((await get("/api/v1/auth/session", { cookie })).status).toBe(200);
+  });
+
+  it("refuses an email already in use", async () => {
+    await registerAndGetCookie("api-email-taken@example.com");
+    const cookie = await registerAndGetCookie("api-email-changer@example.com");
+
+    const conflict = await post(
+      "/api/v1/auth/email",
+      { email: "api-email-taken@example.com", protectedVaultKey: ENVELOPE },
+      { cookie },
+    );
+    expect(conflict.status).toBe(409);
+  });
+
+  it("deletes the account, clears the cookie and frees the address", async () => {
+    const credentials = await registrationBody("api-delete@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+
+    const deleted = await api.request(
+      "DELETE",
+      "/api/v1/auth/account",
+      { authHash: credentials.authHash },
+      { cookie },
+    );
+    expect(deleted.status).toBe(200);
+    expect((await deleted.json()).deleted).toBe(true);
+    expect(deleted.headers.get("set-cookie")).toContain("Max-Age=0");
+
+    expect((await get("/api/v1/auth/session", { cookie })).status).toBe(401);
+
+    const reuse = await post(
+      "/api/v1/auth/register",
+      await registrationBody("api-delete@example.com"),
+    );
+    expect(reuse.status).toBe(201);
+  });
+
+  it("refuses account deletion with the wrong master password", async () => {
+    const credentials = await registrationBody("api-delete-wrong@example.com");
+    const cookie = sessionCookie(await post("/api/v1/auth/register", credentials));
+    if (!cookie) throw new Error("registration did not set a session cookie");
+
+    const refused = await api.request(
+      "DELETE",
+      "/api/v1/auth/account",
+      { authHash: "0".repeat(64) },
+      { cookie },
+    );
+    expect(refused.status).toBe(401);
+    expect((await get("/api/v1/auth/session", { cookie })).status).toBe(200);
+  });
+});
+
 describe("vault routes", () => {
   it("runs an item through create, list, update, conflict, trash, restore and purge", async () => {
     const cookie = await registerAndGetCookie("api-vault@example.com");

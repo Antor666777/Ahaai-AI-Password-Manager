@@ -57,6 +57,8 @@ export interface DraftFields {
   /** Empty string means "no folder". */
   folderId: string;
   favorite: boolean;
+  /** Demand the master password before this item's secrets are revealed. */
+  reprompt: boolean;
   username: string;
   password: string;
   /** Raw two-factor input: a base32 secret or a full otpauth:// URI. */
@@ -84,6 +86,7 @@ export function emptyFields(type: ItemType): DraftFields {
     notes: "",
     folderId: "",
     favorite: false,
+    reprompt: false,
     username: "",
     password: "",
     totp: "",
@@ -121,6 +124,7 @@ export function fieldsFromItem(item: DecryptedItem): DraftFields {
   fields.notes = item.notes;
   fields.folderId = item.folderId ?? "";
   fields.favorite = item.favorite;
+  fields.reprompt = item.reprompt;
 
   switch (item.type) {
     case "login": {

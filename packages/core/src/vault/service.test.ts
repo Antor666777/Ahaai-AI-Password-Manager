@@ -2,16 +2,18 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seal } from "@ahaai/core/crypto/aead";
 import { randomBytes, utf8ToBytes } from "@ahaai/core/crypto/encoding";
-import { items } from "@ahaai/db/schema";
+import { itemRevisions, items } from "@ahaai/db/schema";
 import { createTestUser } from "@ahaai/testing/helpers/auth";
 import { createTestDb, type TestDb } from "@ahaai/testing/helpers/db";
 import {
+  MAX_REVISIONS_PER_ITEM,
   createFolder,
   createItem,
   createItems,
   deleteFolder,
   getItem,
   listFolders,
+  listItemRevisions,
   listItems,
   purgeItem,
   restoreItem,
@@ -424,5 +426,176 @@ describe("vault service", () => {
   it("returns an empty list for an empty batch", async () => {
     const user = await createTestUser(ctx.db, { email: "bulk-empty@example.com" });
     expect(await createItems(ctx.db, user.id, [])).toEqual([]);
+  });
+});
+
+describe("item revisions", () => {
+  let ctx: TestDb;
+
+  beforeAll(async () => {
+    ctx = await createTestDb();
+  });
+
+  afterAll(async () => {
+    await ctx.close();
+  });
+
+  it("snapshots the prior row on update but not on trash or restore", async () => {
+    const user = await createTestUser(ctx.db, { email: "rev1@example.com" });
+    const item = await createItem(ctx.db, user.id, {
+      type: "login",
+      nameEnc: envelope("v1-name"),
+      dataEnc: envelope("v1-data"),
+      notesEnc: envelope("v1-notes"),
+    });
+
+    // A fresh item has no history; nothing has been overwritten yet.
+    expect(await listItemRevisions(ctx.db, user.id, item.id)).toHaveLength(0);
+
+    await updateItem(ctx.db, user.id, item.id, {
+      revision: 1,
+      nameEnc: envelope("v2-name"),
+    });
+
+    const revisions = await listItemRevisions(ctx.db, user.id, item.id);
+    expect(revisions).toHaveLength(1);
+
+    const [snapshot] = revisions;
+    expect(snapshot.itemId).toBe(item.id);
+    expect(snapshot.userId).toBe(user.id);
+    expect(snapshot.revision).toBe(1);
+    expect(snapshot.nameEnc).toBe(item.nameEnc);
+    expect(snapshot.notesEnc).toBe(item.notesEnc);
+    expect(snapshot.dataEnc).toBe(item.dataEnc);
+    expect(snapshot.createdAt).toBeInstanceOf(Date);
+
+    // Trash and restore change no content, so they add no snapshots.
+    await trashItem(ctx.db, user.id, item.id);
+    await restoreItem(ctx.db, user.id, item.id);
+    expect(await listItemRevisions(ctx.db, user.id, item.id)).toHaveLength(1);
+  });
+
+  it("keeps exactly the newest twenty revisions and drops the oldest", async () => {
+    const user = await createTestUser(ctx.db, { email: "rev2@example.com" });
+    const item = await createItem(ctx.db, user.id, {
+      type: "login",
+      nameEnc: envelope("start"),
+      dataEnc: envelope("start"),
+    });
+
+    // 25 updates write 25 snapshots (revisions 1..25) before the cap applies.
+    for (let revision = 1; revision <= 25; revision += 1) {
+      await updateItem(ctx.db, user.id, item.id, {
+        revision,
+        nameEnc: envelope(`v${revision + 1}`),
+      });
+    }
+
+    const revisions = await listItemRevisions(ctx.db, user.id, item.id);
+    expect(revisions).toHaveLength(MAX_REVISIONS_PER_ITEM);
+    // Newest first, and the newest twenty of the 25 written.
+    expect(revisions.map((entry) => entry.revision)).toEqual(
+      Array.from({ length: MAX_REVISIONS_PER_ITEM }, (_, index) => 25 - index),
+    );
+    expect(revisions.at(-1)?.revision).toBe(6);
+
+    // The read honours a smaller limit without reordering.
+    const limited = await listItemRevisions(ctx.db, user.id, item.id, {
+      limit: 5,
+    });
+    expect(limited.map((entry) => entry.revision)).toEqual([25, 24, 23, 22, 21]);
+  });
+
+  it("scopes revisions to the owning user", async () => {
+    const alice = await createTestUser(ctx.db, { email: "rev-alice@example.com" });
+    const bob = await createTestUser(ctx.db, { email: "rev-bob@example.com" });
+    const item = await createItem(ctx.db, alice.id, {
+      type: "login",
+      nameEnc: envelope(),
+      dataEnc: envelope(),
+    });
+    await updateItem(ctx.db, alice.id, item.id, {
+      revision: 1,
+      nameEnc: envelope(),
+    });
+
+    await expect(
+      listItemRevisions(ctx.db, bob.id, item.id),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(await listItemRevisions(ctx.db, alice.id, item.id)).toHaveLength(1);
+  });
+
+  it("removes revisions through the cascade when an item is purged", async () => {
+    const user = await createTestUser(ctx.db, { email: "rev3@example.com" });
+    const item = await createItem(ctx.db, user.id, {
+      type: "login",
+      nameEnc: envelope(),
+      dataEnc: envelope(),
+    });
+    await updateItem(ctx.db, user.id, item.id, {
+      revision: 1,
+      nameEnc: envelope(),
+    });
+    await updateItem(ctx.db, user.id, item.id, {
+      revision: 2,
+      nameEnc: envelope(),
+    });
+    expect(await listItemRevisions(ctx.db, user.id, item.id)).toHaveLength(2);
+
+    await trashItem(ctx.db, user.id, item.id);
+    await purgeItem(ctx.db, user.id, item.id);
+
+    const rows = await ctx.db
+      .select()
+      .from(itemRevisions)
+      .where(eq(itemRevisions.itemId, item.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("recovers an old snapshot's exact ciphertext and restoring it snapshots the replaced version", async () => {
+    const user = await createTestUser(ctx.db, { email: "rev4@example.com" });
+
+    const v1Name = envelope("v1-name");
+    const v1Data = envelope("v1-data");
+    const item = await createItem(ctx.db, user.id, {
+      type: "login",
+      nameEnc: v1Name,
+      dataEnc: v1Data,
+    });
+
+    await updateItem(ctx.db, user.id, item.id, {
+      revision: 1,
+      nameEnc: envelope("v2-name"),
+      dataEnc: envelope("v2-data"),
+    });
+    await updateItem(ctx.db, user.id, item.id, {
+      revision: 2,
+      nameEnc: envelope("v3-name"),
+    });
+
+    const stored = await listItemRevisions(ctx.db, user.id, item.id);
+    const snapshotV1 = stored.find((entry) => entry.revision === 1);
+    expect(snapshotV1).toBeDefined();
+    // The bytes are reused verbatim: no re-seal, so the AAD still matches.
+    expect(snapshotV1?.nameEnc).toBe(v1Name);
+    expect(snapshotV1?.dataEnc).toBe(v1Data);
+
+    // Restoring is an ordinary update: it carries the optimistic revision the
+    // current row holds and snapshots the version it replaces.
+    const restored = await updateItem(ctx.db, user.id, item.id, {
+      revision: 3,
+      nameEnc: snapshotV1?.nameEnc as string,
+      notesEnc: snapshotV1?.notesEnc ?? null,
+      dataEnc: snapshotV1?.dataEnc as string,
+    });
+    expect(restored.revision).toBe(4);
+    expect(restored.nameEnc).toBe(v1Name);
+    expect(restored.dataEnc).toBe(v1Data);
+
+    const after = await listItemRevisions(ctx.db, user.id, item.id);
+    expect(after.map((entry) => entry.revision)).toEqual([3, 2, 1]);
+    // The newest snapshot is v3, the version the restore displaced.
+    expect(after[0].revision).toBe(3);
   });
 });

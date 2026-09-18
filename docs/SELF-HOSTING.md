@@ -85,6 +85,26 @@ ahaai.example.com {
 Then set `COOKIE_SECURE=true` and `TRUST_PROXY=1`, and restart. Caddy obtains a certificate on its
 own. Nothing in the app needs to know it is behind TLS beyond those two flags.
 
+### Serving the frontend, and the 404 page
+
+The browser bundle is a static export, so something has to serve it as files.
+
+- **The bundled container or binary does it for you** when `SERVE_STATIC=1`. A path that matches no
+  file falls through to the exported `404.html`, so a stale link lands on the app's own page rather
+  than a raw error.
+- **A reverse proxy in front of the API has to be told.** Point unknown paths at the exported
+  `404.html`, or the visitor sees the proxy's own page and never reaches the app:
+
+  ```
+  root /srv/ahaai/out;
+  try_files $uri $uri/ /index.html;
+  error_page 404 /404.html;
+  ```
+
+The frontend calls the API on its own origin by default, which is how the single-container bundle
+works. Hosting the two separately means building with `NEXT_PUBLIC_API_BASE_URL` set and adding the
+frontend origin to the API's allowed origins, otherwise the session cookie will not be sent.
+
 ---
 
 ## Whether you need Redis

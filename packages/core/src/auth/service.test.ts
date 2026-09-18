@@ -1,12 +1,28 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildRegistrationMaterial, rewrapVaultKey } from "@ahaai/core/crypto/vault-key";
-import { securityEvents, userSettings, users } from "@ahaai/db/schema";
+import { deriveMasterKey } from "@ahaai/core/crypto/kdf";
+import { splitMasterKey } from "@ahaai/core/crypto/split";
+import {
+  buildRegistrationMaterial,
+  rewrapVaultKey,
+  unwrapVaultKey,
+} from "@ahaai/core/crypto/vault-key";
+import {
+  folders,
+  items,
+  securityEvents,
+  sessions,
+  userSettings,
+  users,
+} from "@ahaai/db/schema";
 import { createTestUser, deriveAuthHash, TEST_PASSWORD } from "@ahaai/testing/helpers/auth";
 import { cheapKdfParams } from "@ahaai/testing/helpers/crypto";
 import { createTestDb, type TestDb } from "@ahaai/testing/helpers/db";
 import {
+  changeEmail,
   changeMasterPassword,
+  checkAuthHash,
+  deleteAccount,
   loginUser,
   logoutUser,
   normalizeEmail,
@@ -231,5 +247,145 @@ describe("auth service", () => {
         protectedVaultKey: user.protectedVaultKey,
       }),
     ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+  });
+
+  it("checks a master password through the one shared comparison", async () => {
+    const user = await createTestUser(ctx.db, { email: "verify@example.com" });
+    const [row] = await ctx.db
+      .select()
+      .from(users)
+      .where(eq(users.id, user.id));
+
+    expect(await checkAuthHash(row, user.authHash)).toBe(true);
+    expect(await checkAuthHash(row, "0".repeat(64))).toBe(false);
+  });
+
+  it("changes the email, re-wraps the vault key and signs out other devices", async () => {
+    const oldEmail = "change-old@example.com";
+    const newEmail = "change-new@example.com";
+    const user = await createTestUser(ctx.db, { email: oldEmail });
+    // Drop the session registration created so the revoked count is exact.
+    await revokeAllSessions(ctx.db, user.id);
+
+    const current = await createSession(ctx.db, user.id);
+    const other = await createSession(ctx.db, user.id);
+
+    const [before] = await ctx.db
+      .select()
+      .from(users)
+      .where(eq(users.id, user.id));
+
+    const rewrapped = await rewrapVaultKey(
+      user.vaultKey,
+      user.password,
+      user.kdfParams,
+      normalizeEmail(newEmail),
+    );
+
+    const result = await changeEmail(ctx.db, {
+      userId: user.id,
+      sessionId: current.session.id,
+      email: newEmail,
+      protectedVaultKey: rewrapped.protectedVaultKey,
+    });
+
+    expect(result.user.email).toBe(newEmail);
+    expect(result.user.emailNormalized).toBe(normalizeEmail(newEmail));
+    expect(result.user.protectedVaultKey).toBe(rewrapped.protectedVaultKey);
+    expect(result.revokedSessions).toBe(1);
+
+    // This device stays signed in; every other session is gone.
+    expect((await resolveSession(ctx.db, current.token)).status).toBe("active");
+    expect((await resolveSession(ctx.db, other.token)).status).toBe("none");
+
+    // The assertion that guards the real risk: the stored envelope opens with
+    // the NEW address binding and not with the old one. Get this wrong and it
+    // fails only at unlock time, with a GCM tag error.
+    const { encKey } = splitMasterKey(
+      await deriveMasterKey(user.password, user.kdfParams),
+    );
+    const opened = unwrapVaultKey(
+      rewrapped.protectedVaultKey,
+      encKey,
+      normalizeEmail(newEmail),
+    );
+    expect(Array.from(opened)).toEqual(Array.from(user.vaultKey));
+    expect(() =>
+      unwrapVaultKey(
+        rewrapped.protectedVaultKey,
+        encKey,
+        normalizeEmail(oldEmail),
+      ),
+    ).toThrow();
+
+    const [after] = await ctx.db
+      .select()
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(after.email).toBe(newEmail);
+    expect(after.securityStamp).not.toBe(before.securityStamp);
+
+    const events = await ctx.db
+      .select()
+      .from(securityEvents)
+      .where(eq(securityEvents.type, "auth.email.changed"));
+    expect(events.some((event) => event.userId === user.id)).toBe(true);
+  });
+
+  it("deletes the account, cascades its data and keeps an anonymised audit trail", async () => {
+    const user = await createTestUser(ctx.db, { email: "delete@example.com" });
+
+    const [folder] = await ctx.db
+      .insert(folders)
+      .values({ userId: user.id, nameEnc: "v1.AAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBBBB" })
+      .returning();
+    await ctx.db.insert(items).values({
+      userId: user.id,
+      type: "login",
+      nameEnc: "v1.AAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBBBB",
+      dataEnc: "v1.AAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBBBB",
+      folderId: folder.id,
+    });
+
+    const result = await deleteAccount(ctx.db, {
+      userId: user.id,
+      authHash: user.authHash,
+    });
+    expect(result).toEqual({ deleted: true });
+
+    expect(
+      await ctx.db.select().from(users).where(eq(users.id, user.id)),
+    ).toHaveLength(0);
+    expect(
+      await ctx.db.select().from(items).where(eq(items.userId, user.id)),
+    ).toHaveLength(0);
+    expect(
+      await ctx.db.select().from(folders).where(eq(folders.userId, user.id)),
+    ).toHaveLength(0);
+    expect(
+      await ctx.db.select().from(sessions).where(eq(sessions.userId, user.id)),
+    ).toHaveLength(0);
+
+    // The audit row is written before the delete, so the ON DELETE SET NULL FK
+    // anonymises it instead of the cascade erasing it.
+    const deleted = await ctx.db
+      .select()
+      .from(securityEvents)
+      .where(eq(securityEvents.type, "auth.account.deleted"));
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0].severity).toBe("critical");
+    expect(deleted[0].userId).toBeNull();
+  });
+
+  it("refuses to delete the account with the wrong master password", async () => {
+    const user = await createTestUser(ctx.db, { email: "delete-wrong@example.com" });
+
+    await expect(
+      deleteAccount(ctx.db, { userId: user.id, authHash: "0".repeat(64) }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", status: 401 });
+
+    expect(
+      await ctx.db.select().from(users).where(eq(users.id, user.id)),
+    ).toHaveLength(1);
   });
 });

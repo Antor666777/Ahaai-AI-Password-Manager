@@ -97,9 +97,31 @@ export function parseImport(
 }
 
 /**
+ * The generic CSV carries tags in one cell. They are joined with a newline,
+ * which a single-line tag field cannot produce, so no tag name can contain the
+ * separator. `serializeCsv` quotes the cell and `readCsv` hands it back whole,
+ * so the round trip is exact.
+ */
+const TAG_SEPARATOR = "\n";
+
+function joinTags(tags: string[] | undefined): string {
+  return (tags ?? [])
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0)
+    .join(TAG_SEPARATOR);
+}
+
+function splitTags(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+}
+
+/**
  * Fallback mapper for an unknown header. It is also the reader for the output
  * of `toGenericCsv`, so the two round-trip. Column names are matched by alias
- * (`name`/`title`/`account`, `urls`/`url`/`web site`, ...).
+ * (`name`/`title`/`account`, `urls`/`url`/`web site`, `tags`/`tag`, ...).
  */
 function parseGeneric(doc: CsvDocument, onSkip: SkipCollector): TransferRecord[] {
   const nameIndex = columnIndex(doc.header, "name", "title", "account");
@@ -113,6 +135,7 @@ function parseGeneric(doc: CsvDocument, onSkip: SkipCollector): TransferRecord[]
     type: columnIndex(doc.header, "type"),
     notes: columnIndex(doc.header, "notes", "extra", "comments"),
     folder: columnIndex(doc.header, "folder", "group", "grouping"),
+    tags: columnIndex(doc.header, "tags", "tag"),
     username: columnIndex(doc.header, "username", "login name"),
     password: columnIndex(doc.header, "password"),
     totp: columnIndex(doc.header, "totp", "otpauth"),
@@ -181,6 +204,7 @@ function parseGeneric(doc: CsvDocument, onSkip: SkipCollector): TransferRecord[]
     }
 
     const folder = cell(cells, c.folder).trim();
+    const tags = splitTags(cell(cells, c.tags));
     const record: TransferRecord = {
       type,
       name,
@@ -189,6 +213,7 @@ function parseGeneric(doc: CsvDocument, onSkip: SkipCollector): TransferRecord[]
     };
     if (notes) record.notes = notes;
     if (folder) record.folder = folder;
+    if (tags.length > 0) record.tags = tags;
     records.push(record);
   }
 
@@ -265,6 +290,10 @@ function bitwardenRow(record: TransferRecord): string[] {
  * file round-trips through `parseImport` and can be handed to Bitwarden's
  * importer. Identity is flattened to first/last name and the two card expiry
  * columns, which is the grain Bitwarden itself uses.
+ *
+ * Lossy for tags: Bitwarden's CSV has no tag column, so `record.tags` is
+ * dropped rather than smuggled into `folder` or `notes`. A tag-fidelity export
+ * is `toGenericCsv` instead.
  */
 export function toBitwardenCsv(records: TransferRecord[]): string {
   return serializeCsv([BITWARDEN_HEADER, ...records.map(bitwardenRow)]);
@@ -276,6 +305,7 @@ const GENERIC_HEADER = [
   "favorite",
   "notes",
   "folder",
+  "tags",
   "username",
   "password",
   "totp",
@@ -300,6 +330,7 @@ function genericRow(record: TransferRecord): string[] {
     record.favorite ? "1" : "0",
     record.notes ?? "",
     record.folder ?? "",
+    joinTags(record.tags),
     payload.username ?? "",
     payload.password ?? "",
     payload.totpSecret ?? "",
@@ -317,7 +348,10 @@ function genericRow(record: TransferRecord): string[] {
   ];
 }
 
-/** Plaintext, lossless-within-its-columns CSV. Round-trips through `parseImport`. */
+/**
+ * Plaintext, lossless-within-its-columns CSV. Round-trips through `parseImport`,
+ * including `tags`, which travel in a newline-joined `tags` column.
+ */
 export function toGenericCsv(records: TransferRecord[]): string {
   return serializeCsv([GENERIC_HEADER, ...records.map(genericRow)]);
 }

@@ -4,6 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/feedback";
 import { PasswordField, SelectField, TextInput } from "@/components/ui/field";
+import { Switch } from "@/components/ui/controls";
 import { api } from "@/lib/client/api";
 import { useToast } from "@/lib/client/toast";
 import type { ApiProvider, ProviderPreset } from "@/lib/client/types";
@@ -68,6 +69,7 @@ export function ProviderForm({ presets, onAdded, onCancel }: ProviderFormProps) 
     firstPreset?.defaultModels.at(0) ?? CUSTOM_MODEL,
   );
   const [customModel, setCustomModel] = useState("");
+  const [zeroDataRetention, setZeroDataRetention] = useState(true);
   const [presetIdError, setPresetIdError] = useState<string | undefined>();
   const [labelError, setLabelError] = useState<string | undefined>();
   const [apiKeyError, setApiKeyError] = useState<string | undefined>();
@@ -90,6 +92,7 @@ export function ProviderForm({ presets, onAdded, onCancel }: ProviderFormProps) 
   const keyRequired = preset.requiresKey;
   const wantsKey = keyRequired || preset.keyOptional;
   const wantsBaseUrl = preset.isLocal || preset.kind === "openai-compatible";
+  const isEvaluation = preset.capability === "evaluation";
   const modelId = model === CUSTOM_MODEL ? customModel.trim() : model;
   const localPresets = presets.filter((item) => item.isLocal);
   const hostedPresets = presets.filter((item) => !item.isLocal);
@@ -110,6 +113,7 @@ export function ProviderForm({ presets, onAdded, onCancel }: ProviderFormProps) 
     setModel(next?.defaultModels.at(0) ?? CUSTOM_MODEL);
     setCustomModel("");
     setApiKey("");
+    setZeroDataRetention(true);
     clearErrors();
   }
 
@@ -189,6 +193,9 @@ export function ProviderForm({ presets, onAdded, onCancel }: ProviderFormProps) 
         apiKey: apiKey.trim().length > 0 ? apiKey.trim() : null,
         baseUrl: wantsBaseUrl ? baseUrl.trim() : null,
         defaultModel: modelId.length > 0 ? modelId : null,
+        ...(isEvaluation
+          ? { zeroDataRetention }
+          : {}),
       });
       toast.success(
         "Provider added",
@@ -389,6 +396,18 @@ export function ProviderForm({ presets, onAdded, onCancel }: ProviderFormProps) 
               if (modelError) setModelError(undefined);
             }}
           />
+        ) : null}
+
+        {isEvaluation ? (
+          <div className="sm:col-span-2">
+            <Switch
+              checked={zeroDataRetention}
+              disabled={submitting}
+              onChange={setZeroDataRetention}
+              label="Zero Data Retention"
+              description="Ask the gateway not to retain this request and not to train on it. Vercel requires a Pro or Enterprise plan, so turn this off if the connection test is refused."
+            />
+          </div>
         ) : null}
       </div>
 

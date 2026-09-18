@@ -137,9 +137,13 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
       }),
       metadata: {
         mode: body.mode,
+        engine: result.engine,
         presetId: result.presetId,
         modelId: result.modelId,
+        intent: result.intent,
+        zeroDataRetention: result.zeroDataRetention,
         candidateCount: result.candidateCount,
+        shortlistCount: result.shortlistCount,
         matchCount: result.matches.length,
         truncated: result.truncated,
       },
@@ -151,6 +155,10 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
       presetId: result.presetId,
       isLocal: result.isLocal,
       mode: result.mode,
+      engine: result.engine,
+      intent: result.intent,
+      zeroDataRetention: result.zeroDataRetention,
+      shortlistCount: result.shortlistCount,
       truncated: result.truncated,
     });
   });

@@ -50,3 +50,25 @@ export const changePasswordSchema = z.object({
 export const revokeSessionSchema = z.object({
   sessionId: z.string().uuid(),
 });
+
+/**
+ * Body for revoking every session. `includeCurrent` defaults to false so the
+ * browser keeps its own session; API and extension clients opt in to end it too.
+ */
+export const revokeAllSessionsSchema = z.object({
+  includeCurrent: z.boolean().optional().default(false),
+});
+
+/** Re-checking the master password before a reprompt reveals a secret. */
+export const verifyMasterPasswordSchema = z.object({
+  authHash: authHashSchema,
+});
+
+export const changeEmailSchema = z.object({
+  email: emailSchema,
+  protectedVaultKey: envelopeSchema,
+});
+
+export const deleteAccountSchema = z.object({
+  authHash: authHashSchema,
+});

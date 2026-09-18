@@ -45,6 +45,7 @@ export interface ProviderInput {
   apiKey?: string | null;
   defaultModel?: string | null;
   isLocal?: boolean;
+  zeroDataRetention?: boolean;
 }
 
 export async function createProvider(
@@ -73,6 +74,9 @@ export async function createProvider(
         apiKeyEnc: input.apiKey ? encryptApiKey(input.apiKey) : null,
         defaultModel: input.defaultModel ?? preset.defaultModels[0] ?? null,
         isLocal,
+        // Retention is the safer default, and a provider added before the
+        // setting existed keeps it.
+        zeroDataRetention: input.zeroDataRetention ?? true,
       })
       .returning();
     return row;
@@ -92,6 +96,7 @@ export interface ProviderUpdateInput {
   apiKey?: string | null;
   defaultModel?: string | null;
   isLocal?: boolean;
+  zeroDataRetention?: boolean;
 }
 
 export async function updateProvider(
@@ -115,6 +120,9 @@ export async function updateProvider(
   if (input.label !== undefined) patch.label = input.label;
   if (input.baseUrl !== undefined) patch.baseUrl = input.baseUrl;
   if (input.defaultModel !== undefined) patch.defaultModel = input.defaultModel;
+  if (input.zeroDataRetention !== undefined) {
+    patch.zeroDataRetention = input.zeroDataRetention;
+  }
   if (input.apiKey !== undefined) {
     patch.apiKeyEnc = input.apiKey === null ? null : encryptApiKey(input.apiKey);
   }

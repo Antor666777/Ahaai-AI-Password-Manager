@@ -2,7 +2,8 @@ import type { LanguageModel } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@ahaai/db/types";
 import { mintToken } from "@ahaai/core/crypto/tokenize";
-import type { ResolvedModel } from "./resolve";
+import type { ResolvedEvaluationModel, ResolvedModel } from "./resolve";
+import { MAX_SHORTLIST } from "./shortlist";
 import {
   SEARCH_SYSTEM_PROMPT,
   buildSearchPrompt,
@@ -13,6 +14,9 @@ import {
 
 const db = {} as Database;
 
+/** No decision model configured: these tests exercise the language path. */
+const noEvaluation = async () => null;
+
 function resolved(overrides: Partial<ResolvedModel> = {}): ResolvedModel {
   return {
     presetId: "openai",
@@ -21,6 +25,17 @@ function resolved(overrides: Partial<ResolvedModel> = {}): ResolvedModel {
     source: "database",
     model: {} as unknown as LanguageModel,
     ...overrides,
+  };
+}
+
+function resolvedEvaluation(): ResolvedEvaluationModel {
+  return {
+    presetId: "vercel-gateway",
+    modelId: "typesafe-ai/jev",
+    isLocal: false,
+    source: "database",
+    zeroDataRetention: true,
+    model: {} as ResolvedEvaluationModel["model"],
   };
 }
 
@@ -99,7 +114,7 @@ describe("searchVault", () => {
       db,
       "user-1",
       { query: "duolingo", mode: "cloud", candidates },
-      { resolve, generate },
+      { resolve, generate, resolveEvaluation: noEvaluation },
     );
 
     expect(result.matches.map((match) => match.token)).toEqual([
@@ -120,7 +135,7 @@ describe("searchVault", () => {
       db,
       "user-1",
       { query: "anything", mode: "local", model: "llama3.2", candidates },
-      { resolve, generate },
+      { resolve, generate, resolveEvaluation: noEvaluation },
     );
 
     expect(resolve).toHaveBeenCalledWith(
@@ -141,7 +156,7 @@ describe("searchVault", () => {
       db,
       "user-1",
       { query: "grandpa youtube", mode: "cloud", candidates },
-      { resolve: async () => resolved(), generate },
+      { resolve: async () => resolved(), generate, resolveEvaluation: noEvaluation },
     );
 
     expect(capturedPrompt).toContain("grandpa youtube");
@@ -158,7 +173,7 @@ describe("searchVault", () => {
         db,
         "user-1",
         { query: "x", mode: "cloud", candidates },
-        { resolve: async () => resolved(), generate },
+        { resolve: async () => resolved(), generate, resolveEvaluation: noEvaluation },
       ),
     ).rejects.toMatchObject({ code: "UPSTREAM", status: 502 });
   });
@@ -173,7 +188,7 @@ describe("searchVault", () => {
         db,
         "user-1",
         { query: "x", mode: "cloud", candidates },
-        { resolve: async () => resolved(), generate },
+        { resolve: async () => resolved(), generate, resolveEvaluation: noEvaluation },
       ),
     ).rejects.toMatchObject({ code: "UPSTREAM" });
   });
@@ -188,8 +203,159 @@ describe("searchVault", () => {
         db,
         "user-1",
         { query: "x", mode: "local", candidates },
-        { resolve, generate: async () => ({ object: { matches: [] } }) },
+        {
+          resolve,
+          generate: async () => ({ object: { matches: [] } }),
+          resolveEvaluation: noEvaluation,
+        },
       ),
     ).rejects.toThrow("bad mode");
+  });
+});
+
+describe("searchVault with a decision model", () => {
+  const tokens = [mintToken(), mintToken(), mintToken()];
+  const candidates = tokens.map((token, index) => ({
+    token,
+    title: `Credential ${index}`,
+  }));
+
+  it("ranks by probability, bands confidence, and drops unknown tokens", async () => {
+    const evaluate: NonNullable<SearchDeps["evaluate"]> = async () => ({
+      intent: "lookup",
+      decisions: [
+        { token: tokens[1], probability: 0.2 },
+        { token: tokens[2], probability: 0.85 },
+        { token: tokens[0], probability: 0.55 },
+        { token: mintToken(), probability: 0.99 },
+      ],
+    });
+
+    const result = await searchVault(
+      db,
+      "user-1",
+      { query: "bank", mode: "cloud", candidates },
+      { resolveEvaluation: async () => resolvedEvaluation(), evaluate },
+    );
+
+    expect(result.engine).toBe("evaluation");
+    expect(result.intent).toBe("lookup");
+    expect(result.presetId).toBe("vercel-gateway");
+    // 0.2 sits below the relevance floor, and the last token was never sent.
+    expect(result.matches.map((match) => match.token)).toEqual([
+      tokens[2],
+      tokens[0],
+    ]);
+    expect(result.matches[0].confidence).toBe("strong");
+    expect(result.matches[1].confidence).toBe("possible");
+    expect(result.matches[0].reason.length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the language model when no decision model is set up", async () => {
+    const generate = vi.fn(async () => ({
+      object: { matches: [{ token: tokens[0], reason: "duolingo", score: 0.9 }] },
+    })) as unknown as SearchDeps["generate"];
+
+    const result = await searchVault(
+      db,
+      "user-1",
+      { query: "duolingo", mode: "cloud", candidates },
+      {
+        resolveEvaluation: noEvaluation,
+        resolve: async () => resolved(),
+        generate,
+      },
+    );
+
+    expect(result.engine).toBe("language");
+    // A language model's self-reported score is never presented as strong.
+    expect(result.matches[0].confidence).toBe("possible");
+    expect(generate).toHaveBeenCalled();
+  });
+
+  it("never uses a decision model in local mode", async () => {
+    const resolveEvaluation = vi.fn(async () => resolvedEvaluation());
+    const generate = vi.fn(async () => ({
+      object: { matches: [] },
+    })) as unknown as SearchDeps["generate"];
+
+    const result = await searchVault(
+      db,
+      "user-1",
+      { query: "x", mode: "local", candidates },
+      {
+        resolveEvaluation,
+        resolve: async () => resolved({ isLocal: true, presetId: "ollama" }),
+        generate,
+      },
+    );
+
+    expect(resolveEvaluation).not.toHaveBeenCalled();
+    expect(result.engine).toBe("language");
+  });
+
+  it("bounds the question set and flags a partly searched vault", async () => {
+    const many = Array.from({ length: MAX_SHORTLIST + 10 }, (_, index) => ({
+      token: mintToken(),
+      title: `Item ${index}`,
+    }));
+
+    let askedAbout = 0;
+    const evaluate: NonNullable<SearchDeps["evaluate"]> = async (args) => {
+      askedAbout = args.candidates.length;
+      return { decisions: [] };
+    };
+
+    const result = await searchVault(
+      db,
+      "user-1",
+      { query: "anything", mode: "cloud", candidates: many },
+      { resolveEvaluation: async () => resolvedEvaluation(), evaluate },
+    );
+
+    expect(askedAbout).toBe(MAX_SHORTLIST);
+    expect(result.candidateCount).toBe(many.length);
+    expect(result.shortlistCount).toBe(MAX_SHORTLIST);
+    expect(result.truncated).toBe(true);
+    expect(result.matches).toEqual([]);
+  });
+
+  it("maps a decision-model failure to a 502", async () => {
+    const evaluate: NonNullable<SearchDeps["evaluate"]> = async () => {
+      throw new Error("provider exploded");
+    };
+
+    await expect(
+      searchVault(
+        db,
+        "user-1",
+        { query: "x", mode: "cloud", candidates },
+        { resolveEvaluation: async () => resolvedEvaluation(), evaluate },
+      ),
+    ).rejects.toMatchObject({ code: "UPSTREAM", status: 502 });
+  });
+
+  it("carries the provider's retention preference into the decision call", async () => {
+    let seen: boolean | undefined;
+    const evaluate: NonNullable<SearchDeps["evaluate"]> = async (args) => {
+      seen = args.zeroDataRetention;
+      return { decisions: [] };
+    };
+
+    const result = await searchVault(
+      db,
+      "user-1",
+      { query: "x", mode: "cloud", candidates },
+      {
+        resolveEvaluation: async () => ({
+          ...resolvedEvaluation(),
+          zeroDataRetention: false,
+        }),
+        evaluate,
+      },
+    );
+
+    expect(seen).toBe(false);
+    expect(result.zeroDataRetention).toBe(false);
   });
 });

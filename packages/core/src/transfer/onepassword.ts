@@ -14,7 +14,8 @@ import type { ItemPayloadLike, SkipCollector, TransferRecord } from "./types";
  *
  * Header: `Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes`.
  * The export only covers Login items, so every row is a login. `OTPAuth` holds
- * either an `otpauth://` URI or the bare secret.
+ * either an `otpauth://` URI or the bare secret. `Tags` is a semicolon-separated
+ * list (a comma is tolerated too) and becomes `record.tags`.
  */
 export function detect(header: string[]): boolean {
   if (!hasColumn(header, "title")) return false;
@@ -38,6 +39,7 @@ export function parse(
     password: columnIndex(doc.header, "password"),
     otp: columnIndex(doc.header, "otpauth"),
     favorite: columnIndex(doc.header, "favorite"),
+    tags: columnIndex(doc.header, "tags"),
     notes: columnIndex(doc.header, "notes"),
   };
 
@@ -68,6 +70,7 @@ export function parse(
     if (urls.length > 0) payload.urls = urls;
 
     const notes = cell(cells, c.notes).trim();
+    const tags = splitTags(cell(cells, c.tags));
     const record: TransferRecord = {
       type: "login",
       name,
@@ -75,8 +78,21 @@ export function parse(
       favorite: parseBoolean(cell(cells, c.favorite)),
     };
     if (notes) record.notes = notes;
+    if (tags.length > 0) record.tags = tags;
     records.push(record);
   }
 
   return records;
+}
+
+/**
+ * 1Password separates tags with a semicolon, and some exports (and hand-edited
+ * files) use a comma. Tags are whitespace-trimmed and blanks dropped, so a
+ * trailing separator cannot produce an empty tag.
+ */
+function splitTags(value: string): string[] {
+  return value
+    .split(/[;,]/)
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
 }

@@ -46,3 +46,34 @@ describe("onepassword mapper", () => {
     expect(skipped[0]).toMatchObject({ line: 4, reason: "Missing title" });
   });
 });
+
+describe("onepassword Tags column", () => {
+  it("reads a single tag", () => {
+    const { records } = run();
+    expect(records[0].tags).toEqual(["work"]);
+  });
+
+  it("omits tags when the column is empty", () => {
+    const { records } = run();
+    expect(records[1].tags).toBeUndefined();
+  });
+
+  it("splits on semicolons and commas, trimming and dropping blanks", () => {
+    const csv = [
+      "Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes",
+      'Multi,https://x.test,ada,pw,,false,false,"Work; Personal , Travel;;",',
+      "Untagged,https://y.test,ada,pw,,false,false,,",
+    ].join("\n");
+
+    const records = onepassword.parse(readCsv(csv));
+    expect(records[0].tags).toEqual(["Work", "Personal", "Travel"]);
+    expect(records[1].tags).toBeUndefined();
+  });
+
+  it("still detects 1Password from its header", () => {
+    const header = readCsv(
+      "Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes",
+    ).header;
+    expect(onepassword.detect(header)).toBe(true);
+  });
+});

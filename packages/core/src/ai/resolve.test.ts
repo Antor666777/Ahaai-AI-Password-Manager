@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createTestUser } from "@ahaai/testing/helpers/auth";
 import { createTestDb, type TestDb } from "@ahaai/testing/helpers/db";
-import { createProvider, updateAiSettings } from "./service";
-import { resolveLanguageModel } from "./resolve";
+import { createProvider, updateAiSettings, updateProvider } from "./service";
+import { resolveEvaluationModel, resolveLanguageModel } from "./resolve";
 
 describe("resolveLanguageModel", () => {
   let ctx: TestDb;
@@ -174,5 +174,143 @@ describe("resolveLanguageModel", () => {
     });
     expect(resolved.isLocal).toBe(false);
     expect(resolved.presetId).toBe("openai");
+  });
+});
+
+describe("resolveEvaluationModel", () => {
+  let ctx: TestDb;
+  const originalGatewayKey = process.env.AI_GATEWAY_API_KEY;
+  const originalOpenAi = process.env.OPENAI_API_KEY;
+
+  beforeAll(async () => {
+    ctx = await createTestDb();
+  });
+
+  afterAll(async () => {
+    await ctx.close();
+  });
+
+  afterEach(() => {
+    if (originalGatewayKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = originalGatewayKey;
+    if (originalOpenAi === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAi;
+  });
+
+  it("returns null rather than throwing when nothing is set up", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval1@example.com" });
+
+    await expect(
+      resolveEvaluationModel(ctx.db, user.id),
+    ).resolves.toBeNull();
+  });
+
+  it("resolves a saved decision-model provider", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval2@example.com" });
+    await createProvider(ctx.db, user.id, {
+      presetId: "vercel-gateway",
+      label: "gateway",
+      apiKey: "gw-test",
+    });
+
+    const resolved = await resolveEvaluationModel(ctx.db, user.id);
+    expect(resolved?.presetId).toBe("vercel-gateway");
+    expect(resolved?.modelId).toBe("typesafe-ai/jev");
+    expect(resolved?.isLocal).toBe(false);
+    expect(resolved?.source).toBe("database");
+    expect(resolved?.zeroDataRetention).toBe(true);
+  });
+
+  it("keeps zero retention on by default and lets a provider turn it off", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval-zdr@example.com" });
+    const provider = await createProvider(ctx.db, user.id, {
+      presetId: "vercel-gateway",
+      label: "gateway",
+      apiKey: "gw-test",
+    });
+
+    const before = await resolveEvaluationModel(ctx.db, user.id);
+    expect(before?.zeroDataRetention).toBe(true);
+
+    // A plan that refuses the option turns it off for this provider alone.
+    await updateProvider(ctx.db, user.id, provider.id, {
+      zeroDataRetention: false,
+    });
+
+    const after = await resolveEvaluationModel(ctx.db, user.id);
+    expect(after?.zeroDataRetention).toBe(false);
+  });
+
+  it("does not treat a language provider as a decision model", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval3@example.com" });
+    await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "openai",
+      apiKey: "sk-test",
+    });
+
+    await expect(resolveEvaluationModel(ctx.db, user.id)).resolves.toBeNull();
+  });
+
+  it("prefers a decision model over a language default provider", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval4@example.com" });
+    const language = await createProvider(ctx.db, user.id, {
+      presetId: "openai",
+      label: "openai",
+      apiKey: "sk-test",
+    });
+    await createProvider(ctx.db, user.id, {
+      presetId: "vercel-gateway",
+      label: "gateway",
+      apiKey: "gw-test",
+    });
+    await updateAiSettings(ctx.db, user.id, { defaultProviderId: language.id });
+
+    const resolved = await resolveEvaluationModel(ctx.db, user.id);
+    expect(resolved?.presetId).toBe("vercel-gateway");
+  });
+
+  it("falls back to the gateway environment key", async () => {
+    process.env.AI_GATEWAY_API_KEY = "gw-env";
+    const user = await createTestUser(ctx.db, { email: "eval5@example.com" });
+
+    const resolved = await resolveEvaluationModel(ctx.db, user.id);
+    expect(resolved?.source).toBe("environment");
+    expect(resolved?.presetId).toBe("vercel-gateway");
+  });
+
+  it("does not resolve another user's decision model", async () => {
+    delete process.env.AI_GATEWAY_API_KEY;
+    const alice = await createTestUser(ctx.db, { email: "eval-a@example.com" });
+    const bob = await createTestUser(ctx.db, { email: "eval-b@example.com" });
+    const provider = await createProvider(ctx.db, alice.id, {
+      presetId: "vercel-gateway",
+      label: "alice",
+      apiKey: "gw-a",
+    });
+
+    await expect(
+      resolveEvaluationModel(ctx.db, bob.id, { providerId: provider.id }),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps a decision model out of the language path", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const user = await createTestUser(ctx.db, { email: "eval6@example.com" });
+    await createProvider(ctx.db, user.id, {
+      presetId: "vercel-gateway",
+      label: "gateway",
+      apiKey: "gw-test",
+    });
+
+    await expect(
+      resolveLanguageModel(ctx.db, user.id, { mode: "cloud" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });

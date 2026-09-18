@@ -26,6 +26,7 @@ import type {
   CardPayload,
   DecryptedFolder,
   DecryptedItem,
+  DecryptedTag,
   IdentityPayload,
   ItemPayload,
   KdfParams,
@@ -74,12 +75,15 @@ export interface ImportPreflight {
   byType: Record<TransferItemType, number>;
   /** Distinct non-empty folder names the records reference. */
   folders: string[];
+  /** Distinct non-empty tag names the records reference. */
+  tags: string[];
 }
 
 export interface ImportResult {
   imported: number;
   skipped: number;
   foldersCreated: number;
+  tagsCreated: number;
   byType: Record<TransferItemType, number>;
 }
 
@@ -89,6 +93,10 @@ export interface CommitImportOptions {
   folders: DecryptedFolder[];
   /** Creates a missing folder; from `useVault().createFolder`. */
   createFolder?: (name: string) => Promise<DecryptedFolder>;
+  /** Tags already in the vault, so an existing name is reused. */
+  tags?: DecryptedTag[];
+  /** Creates a missing tag; from `useVault().createTag`. */
+  createTag?: (name: string) => Promise<DecryptedTag>;
   onProgress?: (done: number, total: number) => void;
 }
 
@@ -121,6 +129,20 @@ function preflightFromRecords(
     ),
   ];
 
+  // Tag names are compared case-insensitively later, so "Work" and "work" name
+  // the same tag. Keep the first spelling the records used.
+  const tags: string[] = [];
+  const seenTags = new Set<string>();
+  for (const record of records) {
+    for (const name of record.tags ?? []) {
+      const trimmed = name.trim();
+      const key = trimmed.toLowerCase();
+      if (trimmed.length === 0 || seenTags.has(key)) continue;
+      seenTags.add(key);
+      tags.push(trimmed);
+    }
+  }
+
   return {
     fileName,
     format,
@@ -129,6 +151,7 @@ function preflightFromRecords(
     total: records.length,
     byType,
     folders,
+    tags,
   };
 }
 
@@ -173,6 +196,8 @@ interface WireItem {
   dataEnc: string;
   folderId: string | null;
   favorite: boolean;
+  reprompt: boolean;
+  tagIds?: string[];
 }
 
 /**
@@ -279,10 +304,34 @@ function toNeutralPayload(
   }
 }
 
+/**
+ * Maps a record's tag names onto vault tag ids, case-insensitively and without
+ * duplicates. A name the map does not know (no such tag, and none could be
+ * created) is dropped rather than stored as a dangling id.
+ */
+function resolveTagIds(
+  names: string[] | undefined,
+  tagIdByName: Map<string, string>,
+): string[] {
+  if (!names) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) continue;
+    const id = tagIdByName.get(trimmed.toLowerCase());
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 function sealRecord(
   vaultKey: Uint8Array,
   record: TransferRecord,
   folderIdByName: Map<string, string>,
+  tagIdByName: Map<string, string>,
 ): WireItem {
   const id = newId();
   const sealed = sealItem(vaultKey, id, {
@@ -290,7 +339,7 @@ function sealRecord(
     notes: record.notes ?? "",
     data: payloadFor(record),
   });
-  return {
+  const wire: WireItem = {
     id,
     type: record.type,
     nameEnc: sealed.nameEnc,
@@ -300,7 +349,12 @@ function sealRecord(
       ? folderIdByName.get(record.folder.toLowerCase()) ?? null
       : null,
     favorite: record.favorite ?? false,
+    // Bitwarden's "require master password" column is otherwise read by nobody.
+    reprompt: record.reprompt ?? false,
   };
+  const tagIds = resolveTagIds(record.tags, tagIdByName);
+  if (tagIds.length > 0) wire.tagIds = tagIds;
+  return wire;
 }
 
 /** Splits sealed items into request-sized batches by count and by byte size. */
@@ -328,15 +382,22 @@ function batchItems(items: WireItem[]): WireItem[][] {
 }
 
 /**
- * Commits a prepared import: creates any missing folders, seals every record
- * under the in-memory vault key, and posts them in bulk. The caller reloads the
- * vault afterwards.
+ * Commits a prepared import: creates any missing folders and tags, seals every
+ * record under the in-memory vault key, and posts them in bulk. The caller
+ * reloads the vault afterwards.
  */
 export async function commitImport(
   preflight: ImportPreflight,
   options: CommitImportOptions,
 ): Promise<ImportResult> {
-  const { vaultKey, folders, createFolder, onProgress } = options;
+  const {
+    vaultKey,
+    folders,
+    createFolder,
+    tags = [],
+    createTag,
+    onProgress,
+  } = options;
 
   const folderIdByName = new Map<string, string>();
   for (const folder of folders) {
@@ -352,8 +413,25 @@ export async function commitImport(
     foldersCreated += 1;
   }
 
+  // Tags resolve by decrypted name exactly like folders: an existing name
+  // (matched case-insensitively) is reused, a missing one is created once, so a
+  // re-import never produces duplicates.
+  const tagIdByName = new Map<string, string>();
+  for (const tag of tags) {
+    tagIdByName.set(tag.name.toLowerCase(), tag.id);
+  }
+
+  let tagsCreated = 0;
+  for (const name of preflight.tags) {
+    const key = name.toLowerCase();
+    if (tagIdByName.has(key) || !createTag) continue;
+    const created = await createTag(name);
+    tagIdByName.set(key, created.id);
+    tagsCreated += 1;
+  }
+
   const payloads = preflight.records.map((record) =>
-    sealRecord(vaultKey, record, folderIdByName),
+    sealRecord(vaultKey, record, folderIdByName, tagIdByName),
   );
 
   let imported = 0;
@@ -367,16 +445,26 @@ export async function commitImport(
     imported,
     skipped: preflight.skipped.length,
     foldersCreated,
+    tagsCreated,
     byType: preflight.byType,
   };
 }
 
-/** One neutral record per item, with its folder name resolved. */
+/**
+ * One neutral record per item, with its folder and tag names resolved.
+ *
+ * Tags are relational (the item carries ids), so each id is looked up in the
+ * decrypted tag list. An item with no resolvable tags omits `tags` entirely
+ * rather than emitting an empty array, matching how the generic CSV writer
+ * treats absent optional data.
+ */
 export function recordsFromItems(
   items: DecryptedItem[],
   folders: DecryptedFolder[],
+  tags: DecryptedTag[] = [],
 ): TransferRecord[] {
   const folderNameById = new Map(folders.map((folder) => [folder.id, folder.name]));
+  const tagNameById = new Map(tags.map((tag) => [tag.id, tag.name]));
 
   return items.map((item) => {
     const record: TransferRecord = {
@@ -388,6 +476,12 @@ export function recordsFromItems(
     if (item.notes.length > 0) record.notes = item.notes;
     const folder = item.folderId ? folderNameById.get(item.folderId) : undefined;
     if (folder) record.folder = folder;
+    // A tag id with no matching decrypted tag is dropped, so an export never
+    // writes an id or a blank name into the tags column.
+    const tagNames = item.tagIds
+      .map((tagId) => tagNameById.get(tagId))
+      .filter((name): name is string => Boolean(name));
+    if (tagNames.length > 0) record.tags = tagNames;
     return record;
   });
 }
@@ -397,8 +491,9 @@ export function buildCsvExport(
   items: DecryptedItem[],
   folders: DecryptedFolder[],
   kind: CsvExportKind,
+  tags: DecryptedTag[] = [],
 ): string {
-  const records = recordsFromItems(items, folders);
+  const records = recordsFromItems(items, folders, tags);
   return kind === "bitwarden" ? toBitwardenCsv(records) : toGenericCsv(records);
 }
 
@@ -440,8 +535,11 @@ export async function buildEncryptedExport(
   items: DecryptedItem[],
   folders: DecryptedFolder[],
   passphrase: string,
+  tags: DecryptedTag[] = [],
 ): Promise<string> {
-  const payload: ExportPayload = { items: recordsFromItems(items, folders) };
+  const payload: ExportPayload = {
+    items: recordsFromItems(items, folders, tags),
+  };
   const kdfParams = generateKdfParams();
   const masterKey = await deriveMasterKey(passphrase, kdfParams);
   const { encKey } = splitMasterKey(masterKey);

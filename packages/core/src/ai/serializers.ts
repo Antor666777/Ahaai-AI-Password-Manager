@@ -8,6 +8,8 @@ export interface PublicProvider {
   baseUrl: string | null;
   defaultModel: string | null;
   isLocal: boolean;
+  /** Whether evaluation calls ask the provider for zero retention. */
+  zeroDataRetention: boolean;
   hasApiKey: boolean;
   apiKeyMask: string | null;
   createdAt: string;
@@ -32,6 +34,7 @@ export function toPublicProvider(provider: AiProvider): PublicProvider {
     baseUrl: provider.baseUrl,
     defaultModel: provider.defaultModel,
     isLocal: provider.isLocal,
+    zeroDataRetention: provider.zeroDataRetention,
     hasApiKey: provider.apiKeyEnc !== null,
     apiKeyMask,
     createdAt: provider.createdAt.toISOString(),

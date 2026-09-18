@@ -148,12 +148,16 @@ describe("ai search route", () => {
     const token = mintToken();
 
     searchMock.searchVault.mockResolvedValueOnce({
-      matches: [{ token, reason: "matches", score: 0.9 }],
-      presetId: "openai",
-      modelId: "gpt-4o-mini",
+      matches: [{ token, reason: "matches", score: 0.9, confidence: "strong" }],
+      presetId: "vercel-gateway",
+      modelId: "typesafe-ai/jev",
       isLocal: false,
       mode: "cloud",
+      engine: "evaluation",
+      intent: "lookup",
+      zeroDataRetention: false,
       candidateCount: 1,
+      shortlistCount: 1,
       truncated: false,
     });
 
@@ -170,7 +174,12 @@ describe("ai search route", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.matches[0].token).toBe(token);
-    expect(body.modelId).toBe("gpt-4o-mini");
+    expect(body.matches[0].confidence).toBe("strong");
+    expect(body.modelId).toBe("typesafe-ai/jev");
+    expect(body.engine).toBe("evaluation");
+    expect(body.intent).toBe("lookup");
+    expect(body.zeroDataRetention).toBe(false);
+    expect(body.shortlistCount).toBe(1);
   });
 
   it("rejects invalid tokens and empty queries", async () => {

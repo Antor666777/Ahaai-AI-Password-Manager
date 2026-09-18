@@ -13,6 +13,7 @@ export const createProviderSchema = z.object({
   apiKey: providerApiKeySchema.nullable().optional(),
   defaultModel: providerModelSchema.nullable().optional(),
   isLocal: z.boolean().optional(),
+  zeroDataRetention: z.boolean().optional(),
 });
 
 export const updateProviderSchema = z
@@ -22,6 +23,7 @@ export const updateProviderSchema = z
     apiKey: providerApiKeySchema.nullable().optional(),
     defaultModel: providerModelSchema.nullable().optional(),
     isLocal: z.boolean().optional(),
+    zeroDataRetention: z.boolean().optional(),
   })
   .refine(
     (value) => Object.values(value).some((entry) => entry !== undefined),

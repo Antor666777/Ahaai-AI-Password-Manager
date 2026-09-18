@@ -35,8 +35,10 @@ export function SearchResults({
         </p>
         <div className="flex items-center gap-2">
           <p className="mono-data min-w-0 truncate text-[12px] text-ink-faint">
-            {outcome.modelId} · {outcome.presetId} · {outcome.candidateCount} items
-            sent
+            {outcome.modelId} · {outcome.presetId} ·{" "}
+            {outcome.engine === "evaluation"
+              ? `${outcome.shortlistCount} compared`
+              : `${outcome.candidateCount} items sent`}
           </p>
           <Button size="sm" variant="ghost" onClick={onClear}>
             Clear search
@@ -47,16 +49,34 @@ export function SearchResults({
       {outcome.truncated ? (
         <div className="px-3 pt-3">
           <Callout tone="warning" title="Part of the vault was not searched">
-            This vault is larger than one request can carry, so Ahaai sent the
-            first {outcome.candidateCount} items and left the rest out. A
-            narrower query or a smaller folder will search the whole set.
+            {outcome.engine === "evaluation"
+              ? `Your vault has ${outcome.candidateCount} items and Ahaai compared the ${outcome.shortlistCount} most likely ones. A narrower query or a smaller folder will search the whole set.`
+              : `This vault is larger than one request can carry, so Ahaai sent the first ${outcome.candidateCount} items and left the rest out. A narrower query or a smaller folder will search the whole set.`}
+          </Callout>
+        </div>
+      ) : null}
+
+      {outcome.engine === "evaluation" && outcome.zeroDataRetention === false ? (
+        <div className="px-3 pt-3">
+          <Callout
+            tone="warning"
+            title="Zero Data Retention is off for this provider"
+          >
+            This search was answered without it, so the decision model provider
+            is not barred from retaining the titles, notes and domains it
+            received. Turn it back on in AI providers when your plan supports it.
           </Callout>
         </div>
       ) : null}
 
       <ul aria-label="Search results">
         {hits.map((hit, index) => (
-          <li key={hit.item.id} className="border-t border-line first:border-t-0">
+          <li
+            key={hit.item.id}
+            className={`border-t border-line first:border-t-0 ${
+              index === 0 && hit.confidence === "strong" ? "bg-surface-2" : ""
+            }`}
+          >
             <button
               type="button"
               onClick={() => onOpen(hit.item)}
@@ -74,7 +94,7 @@ export function SearchResults({
                   >
                     {hit.item.name}
                   </span>
-                  <MatchBadge reason={hit.reason} />
+                  <MatchBadge reason={hit.reason} confidence={hit.confidence} />
                 </span>
                 <span
                   className="mt-0.5 block truncate text-[12.5px] text-ink-muted"

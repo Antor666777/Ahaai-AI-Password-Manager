@@ -7,7 +7,7 @@ Your master password, your vault key, and every plaintext credential stay in the
 stores ciphertext it cannot read, and the AI never receives a real credential.
 
 **Status:** the functional core, the HTTP APIs, the interface, and the self-hosting packaging are all
-in place, covered by 342 automated tests.
+in place, covered by 512 automated tests.
 
 The API is a standalone service, not part of the frontend. That is what lets a browser extension or
 any other client talk to it without depending on Next.js, and it is what makes self-hosting a single
@@ -235,16 +235,22 @@ that sets `omit=dev` silently skips dev dependencies, and `npm install --include
 | --- | --- |
 | `/` | Landing and auth. |
 | `/unlock` | Master password unlock. The key lives only in that tab, in memory. |
-| `/vault` | The vault: AI search, filters, item list, inspector, and editor. |
+| `/vault` | The vault: AI search, filters, sorting, multi-select, list, inspector, and editor. |
 | `/vault/health` | Password health: breached, reused, weak and stale credentials. |
 | `/vault/settings` | Search mode, BYOK providers, import and export, and account access. |
 | `/vault/security` | Active sessions and the audit timeline. |
-| `/vault/trash` | Restore or purge, with confirmation that names the item. |
+| `/vault/trash` | Restore or purge one item, or a selected batch. |
 
 Design rules the interface follows: the 1-4-9 spacing rhythm, three depth planes, a 60 to 76
 character measure on prose, `:focus-visible` rings that are never removed, real labels on every field
 rather than placeholders, a submit button that stays enabled until the request starts, no state
 carried by colour alone, and copy with no em dashes, no exclamation points, and one verb per button.
+
+The vault is keyboard operable: `Cmd K` opens a command palette for jumping to an item or running an
+action, `Cmd N` starts a new item, `/` focuses search, and `?` lists the rest. An item marked for
+reprompt asks for the master password again before it shows a secret. An unmatched path or a failed
+route renders inside the app's own shell rather than the host's, when the host is pointed at the
+exported `404.html` (see [`docs/SELF-HOSTING.md`](./docs/SELF-HOSTING.md)).
 
 ---
 
@@ -274,12 +280,14 @@ CORS and the origin check, and is never an authorization boundary.
 
 ## Testing
 
-`npm test` runs 342 tests with Vitest against an in-memory Postgres through PGlite, so no external
+`npm test` runs 512 tests with Vitest against an in-memory Postgres through PGlite, so no external
 services are needed. Coverage includes the key derivation and split, AEAD envelopes, tokenization,
 session rotation and reuse detection, vault services with optimistic concurrency, the AI search
 pipeline, the HIBP proxy, the rate limiter backends, the provider and mode resolution, RFC 6238 TOTP
 against the published vectors, the Bitwarden, LastPass, 1Password and KeePass import mappers, the
-password-health classifier, the encrypted export envelope, and the readiness probe.
+password-health classifier, the encrypted export envelope, the readiness probe, the item-revision
+history and its restore path, tag assignment and the tag filter, bulk item actions, and the exported
+404 fallback.
 
 The API routes are covered end to end by calling the Hono app directly with a real database and no
 network: registration, login and logout, the whole item lifecycle including a stale-revision conflict,

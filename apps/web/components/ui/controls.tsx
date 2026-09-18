@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { cn } from "./cn";
 
 export interface SwitchProps {
@@ -126,5 +126,79 @@ export function SegmentedControl<T extends string>({
         );
       })}
     </fieldset>
+  );
+}
+
+export interface CheckboxProps {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  /** A hint, when present, becomes the control's accessible description. */
+  hint?: string;
+  disabled?: boolean;
+  id?: string;
+  /**
+   * The "some but not all" state. It is a DOM property rather than an
+   * attribute, so the node is set after each render instead of in markup.
+   */
+  indeterminate?: boolean;
+  /** Keeps the label for assistive tech while removing it from sight. */
+  hideLabel?: boolean;
+  className?: string;
+}
+
+/**
+ * A checkbox is labelled for exactly what it selects. A native input carries
+ * the behaviour, so Space toggles it, Tab reaches it, and an indeterminate box
+ * is announced as mixed without any extra scripting.
+ */
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  hint,
+  disabled,
+  id,
+  indeterminate = false,
+  hideLabel = false,
+  className,
+}: CheckboxProps) {
+  const auto = useId();
+  const fieldId = id ?? auto;
+  const hintId = `${fieldId}-hint`;
+  const box = useRef<HTMLInputElement>(null);
+
+  // The summary box is checked, unchecked, or mixed; the last of those is only
+  // a node property, so it is applied after each render.
+  useEffect(() => {
+    if (box.current) box.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <div className={cn("flex items-start", className)}>
+      <input
+        ref={box}
+        id={fieldId}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={hint ? hintId : undefined}
+        onChange={(event) => onChange(event.target.checked)}
+        className={cn(
+          "size-4 shrink-0 cursor-pointer accent-primary",
+          "disabled:cursor-not-allowed disabled:opacity-55",
+        )}
+      />
+      <div className={cn("min-w-0 ms-2", hideLabel && "sr-only")}>
+        <label htmlFor={fieldId} className="block text-[13px] font-medium leading-snug text-ink">
+          {label}
+        </label>
+        {hint ? (
+          <p id={hintId} className="mt-0.5 text-[12.5px] leading-snug text-ink-faint">
+            {hint}
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }

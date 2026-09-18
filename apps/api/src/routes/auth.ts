@@ -11,9 +11,13 @@ import {
 import { requireAuth } from "@ahaai/core/auth/guard";
 import { getClientIp, getRequestContext } from "@ahaai/core/auth/request-context";
 import {
+  changeEmailSchema,
   changePasswordSchema,
+  deleteAccountSchema,
   loginSchema,
   registerSchema,
+  revokeAllSessionsSchema,
+  verifyMasterPasswordSchema,
 } from "@ahaai/core/auth/schemas";
 import {
   toPublicSession,
@@ -21,13 +25,20 @@ import {
   toSettingsView,
 } from "@ahaai/core/auth/serializers";
 import {
+  changeEmail,
   changeMasterPassword,
+  checkAuthHash,
+  deleteAccount,
   loginUser,
   logoutUser,
   normalizeEmail,
   registerUser,
 } from "@ahaai/core/auth/service";
-import { listSessions, revokeSession } from "@ahaai/core/auth/session";
+import {
+  listSessions,
+  revokeAllSessions,
+  revokeSession,
+} from "@ahaai/core/auth/session";
 import { bytesToBase64, utf8ToBytes } from "@ahaai/core/crypto/encoding";
 import { DEFAULT_KDF_PARAMS, KDF_VERSION } from "@ahaai/core/crypto/kdf";
 import { AppError } from "@ahaai/core/http/errors";
@@ -253,6 +264,121 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       securityStamp: result.securityStamp,
       revokedSessions: result.revokedSessions,
     });
+  });
+
+  app.post("/auth/verify", async (c) => {
+    const { db, config } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    // Same policy as the login per-email rule: this is password guessing.
+    await enforceRateLimit("verify", `user:${user.id}`);
+    const { authHash } = await parseJson(c.req.raw, verifyMasterPasswordSchema);
+
+    // Unlike prelogin, the account is already known here, so no decoy is needed
+    // to keep timing uniform: one Argon2 verify runs whether or not it matches.
+    const valid = await checkAuthHash(user, authHash, {
+      pepper: config.authPepper,
+    });
+
+    if (!valid) {
+      await recordSecurityEvent(db, {
+        userId: user.id,
+        type: "auth.verify.failed",
+        severity: "warning",
+        ...getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+      });
+      // Never say more than "no": a caller learns nothing about the account.
+      throw AppError.unauthorized();
+    }
+
+    // Successes are not recorded, so the activity timeline stays readable.
+    return jsonOk({ ok: true });
+  });
+
+  app.post("/auth/email", async (c) => {
+    const { db, config } = c.get("deps");
+    const { user, session } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("accountChange", `user:${user.id}`);
+    const body = await parseJson(c.req.raw, changeEmailSchema);
+
+    const result = await changeEmail(
+      db,
+      {
+        userId: user.id,
+        sessionId: session.id,
+        email: body.email,
+        protectedVaultKey: body.protectedVaultKey,
+      },
+      getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+    );
+
+    // Frozen contract: the client reads exactly these two fields.
+    return jsonOk({
+      user: toPublicUser(result.user),
+      revokedSessions: result.revokedSessions,
+    });
+  });
+
+  app.delete("/auth/account", async (c) => {
+    const { db, config } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("accountChange", `user:${user.id}`);
+    const { authHash } = await parseJson(c.req.raw, deleteAccountSchema);
+
+    await deleteAccount(
+      db,
+      { userId: user.id, authHash },
+      getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+      { pepper: config.authPepper },
+    );
+
+    return jsonOk(
+      { deleted: true },
+      {
+        headers: {
+          "set-cookie": buildClearSessionCookie({
+            cookieSecure: config.cookieSecure ?? config.isProduction,
+          }),
+        },
+      },
+    );
+  });
+
+  app.post("/auth/sessions/revoke-all", async (c) => {
+    const { db, config } = c.get("deps");
+    const { user, session } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("sessionAdmin", `user:${user.id}`);
+    const { includeCurrent } = await parseJson(c.req.raw, revokeAllSessionsSchema);
+
+    // The browser keeps this device signed in by default; only extension and API
+    // clients pass includeCurrent, which ends the caller's own session too.
+    const revoked = await revokeAllSessions(
+      db,
+      user.id,
+      includeCurrent ? undefined : session.id,
+    );
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "session.revoked_all",
+      severity: "warning",
+      ...getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+      metadata: { count: revoked, includeCurrent },
+    });
+
+    // Ending the caller's session has to clear its cookie, the same way logout
+    // does, or the browser would keep presenting a dead token.
+    return jsonOk(
+      { revoked },
+      includeCurrent
+        ? {
+            headers: {
+              "set-cookie": buildClearSessionCookie({
+                cookieSecure: config.cookieSecure ?? config.isProduction,
+              }),
+            },
+          }
+        : undefined,
+    );
   });
 
   app.get("/auth/sessions", async (c) => {

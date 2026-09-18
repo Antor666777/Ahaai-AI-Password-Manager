@@ -22,6 +22,17 @@ function messageOf(caught: unknown): string {
   return "The server did not answer. Check your connection, then try again.";
 }
 
+/** Plain words for what happened to the other sessions. */
+function signedOutAllText(count: number): string {
+  if (count === 0) {
+    return "No other session was open. This device is the only one signed in.";
+  }
+  if (count === 1) {
+    return "One other session was ended. This device stays signed in.";
+  }
+  return `${count} other sessions were ended. This device stays signed in.`;
+}
+
 export function SessionsPanel() {
   const toast = useToast();
   const now = useNow();
@@ -30,6 +41,8 @@ export function SessionsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<ApiSessionInfo | null>(null);
   const [pending, setPending] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [revokingAll, setRevokingAll] = useState(false);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -52,6 +65,8 @@ export function SessionsPanel() {
     ? describeDevice(target.deviceName, target.deviceType, target.userAgent)
     : "";
 
+  const otherCount = sessions.filter((entry) => !entry.current).length;
+
   async function revoke() {
     if (!target || pending) return;
     setPending(true);
@@ -67,11 +82,37 @@ export function SessionsPanel() {
     }
   }
 
+  async function revokeAll() {
+    if (revokingAll) return;
+    setRevokingAll(true);
+    try {
+      // No argument, so this device keeps its session and the list reloads one
+      // entry shorter.
+      const result = await api.revokeAllSessions();
+      await load();
+      setConfirmAll(false);
+      toast.success("Other devices signed out", signedOutAllText(result.revoked));
+    } catch (caught) {
+      toast.error("Could not sign out other devices", messageOf(caught));
+    } finally {
+      setRevokingAll(false);
+    }
+  }
+
   return (
     <Panel>
       <PanelHeader
         title="Active sessions"
         description="Every browser and device holding a live session for this account."
+        actions={
+          <Button
+            variant="primary"
+            disabled={state !== "ready" || otherCount === 0}
+            onClick={() => setConfirmAll(true)}
+          >
+            Sign out other devices
+          </Button>
+        }
       />
 
       {state === "loading" ? (
@@ -230,6 +271,18 @@ export function SessionsPanel() {
         }
         confirmLabel="Revoke session"
         loading={pending}
+      />
+
+      <ConfirmDialog
+        open={confirmAll}
+        onClose={() => {
+          if (!revokingAll) setConfirmAll(false);
+        }}
+        onConfirm={() => void revokeAll()}
+        title="Sign out other devices?"
+        description="This ends every signed in session except this device. Each one must sign in again with the master password before it can open the vault."
+        confirmLabel="Sign out other devices"
+        loading={revokingAll}
       />
     </Panel>
   );

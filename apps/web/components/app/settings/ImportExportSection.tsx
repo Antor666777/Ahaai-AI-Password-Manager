@@ -54,7 +54,7 @@ const SKIPPED_PREVIEW_LIMIT = 20;
 export function ImportExportSection() {
   const toast = useToast();
   const { vaultKey } = useSession();
-  const { items, folders, createFolder, reload } = useVault();
+  const { items, folders, tags, createFolder, createTag, reload } = useVault();
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [preflight, setPreflight] = useState<ImportPreflight | null>(null);
@@ -143,7 +143,9 @@ export function ImportExportSection() {
       const result = await commitImport(preflight, {
         vaultKey,
         folders,
+        tags,
         createFolder,
+        createTag,
         onProgress: (done, total) => setProgress({ done, total }),
       });
       await reload();
@@ -155,6 +157,9 @@ export function ImportExportSection() {
             : null,
           result.foldersCreated > 0
             ? `${result.foldersCreated} folder${result.foldersCreated === 1 ? "" : "s"} created.`
+            : null,
+          result.tagsCreated > 0
+            ? `${result.tagsCreated} tag${result.tagsCreated === 1 ? "" : "s"} created.`
             : null,
         ]
           .filter(Boolean)
@@ -189,7 +194,7 @@ export function ImportExportSection() {
     setExporting(true);
     setExportError(null);
     try {
-      const json = await buildEncryptedExport(items, folders, passphrase);
+      const json = await buildEncryptedExport(items, folders, passphrase, tags);
       downloadFile(exportFileName("json"), json, JSON_MIME);
       setPassphrase("");
       setConfirmPassphrase("");
@@ -210,7 +215,7 @@ export function ImportExportSection() {
 
   function runCsvExport() {
     if (!csvKind) return;
-    const content = buildCsvExport(items, folders, csvKind);
+    const content = buildCsvExport(items, folders, csvKind, tags);
     downloadFile(exportFileName("csv"), content, CSV_MIME);
     toast.success(
       "Plaintext CSV downloaded",
@@ -336,6 +341,14 @@ export function ImportExportSection() {
                   {preflight.folders.join(", ")}
                 </span>
                 . Missing folders are created; existing names are reused.
+              </p>
+            ) : null}
+
+            {preflight.tags.length > 0 ? (
+              <p className="mt-2">
+                Tags found:{" "}
+                <span className="text-ink">{preflight.tags.join(", ")}</span>. Missing
+                tags are created; existing names are reused.
               </p>
             ) : null}
 

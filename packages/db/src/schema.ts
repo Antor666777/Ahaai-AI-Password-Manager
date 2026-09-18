@@ -5,6 +5,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -160,6 +161,78 @@ export const items = pgTable(
   ],
 );
 
+/**
+ * A user-defined label. The name is sealed in the browser, so only ciphertext
+ * is stored and there is deliberately no server-side uniqueness: de-duplication
+ * by name happens client-side after decryption, exactly like folder names.
+ */
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    nameEnc: text("name_enc").notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [index("tags_user_id_idx").on(table.userId)],
+);
+
+/**
+ * The many-to-many link between items and tags. Deleting either side cascades
+ * this row away, so a tag delete detaches from items without touching them.
+ */
+export const itemTags = pgTable(
+  "item_tags",
+  {
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.itemId, table.tagId] }),
+    index("item_tags_tag_id_idx").on(table.tagId),
+  ],
+);
+
+/**
+ * A snapshot of an item's ciphertext, written just before an update overwrites
+ * it. The envelope AAD binds to the item id and the field, never to the
+ * revision, so a stored snapshot stays decryptable verbatim and restoring one
+ * is an ordinary PATCH rather than a re-seal.
+ */
+export const itemRevisions = pgTable(
+  "item_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The revision this snapshot held before an update replaced it. */
+    revision: integer("revision").notNull(),
+    nameEnc: text("name_enc").notNull(),
+    notesEnc: text("notes_enc"),
+    dataEnc: text("data_enc").notNull(),
+    createdAt,
+  },
+  (table) => [
+    // Revisions per item are strictly increasing, so this is a real invariant.
+    uniqueIndex("item_revisions_item_revision_key").on(
+      table.itemId,
+      table.revision,
+    ),
+    index("item_revisions_user_id_idx").on(table.userId),
+  ],
+);
+
 export const aiProviders = pgTable(
   "ai_providers",
   {
@@ -173,6 +246,13 @@ export const aiProviders = pgTable(
     apiKeyEnc: text("api_key_enc"),
     defaultModel: text("default_model"),
     isLocal: boolean("is_local").notNull().default(false),
+    /**
+     * Ask Vercel for Zero Data Retention (and no prompt training) on this
+     * provider's evaluation calls. Defaults on, because a password manager
+     * should not retain search context. Some plans reject it with a 403, so it
+     * is a per-provider switch rather than a hard requirement.
+     */
+    zeroDataRetention: boolean("zero_data_retention").notNull().default(true),
     createdAt,
     updatedAt,
   },
@@ -206,6 +286,12 @@ export type SecurityEvent = typeof securityEvents.$inferSelect;
 export type Folder = typeof folders.$inferSelect;
 export type Item = typeof items.$inferSelect;
 export type NewItem = typeof items.$inferInsert;
+export type Tag = typeof tags.$inferSelect;
+export type NewTag = typeof tags.$inferInsert;
+export type ItemTag = typeof itemTags.$inferSelect;
+export type NewItemTag = typeof itemTags.$inferInsert;
+export type ItemRevision = typeof itemRevisions.$inferSelect;
+export type NewItemRevision = typeof itemRevisions.$inferInsert;
 export type AiProvider = typeof aiProviders.$inferSelect;
 export type UserSettings = typeof userSettings.$inferSelect;
 export type ItemType = (typeof itemTypeEnum.enumValues)[number];

@@ -135,4 +135,31 @@ describe("bitwarden CSV export", () => {
     expect(result.skipped).toHaveLength(0);
     expect(result.records).toEqual(withCustom);
   });
+
+  it("drops tags, because Bitwarden has no tag column", () => {
+    const result = parseImport(toBitwardenCsv([{ ...RECORDS[0], tags: ["Work"] }]));
+    expect(result.records[0].tags).toBeUndefined();
+  });
+});
+
+describe("generic CSV tags", () => {
+  it("round-trips tags, joined without ambiguity", () => {
+    const withTags: TransferRecord[] = [
+      { ...RECORDS[0], tags: ["Work", "Personal", "has,comma"] },
+      RECORDS[1],
+    ];
+    const csv = toGenericCsv(withTags);
+    expect(csv.split("\r\n")[0]).toContain("tags");
+
+    const result = parseImport(csv);
+    expect(result.format).toBe("generic");
+    expect(result.skipped).toHaveLength(0);
+    expect(result.records).toEqual(withTags);
+    expect(result.records[0].tags).toEqual(["Work", "Personal", "has,comma"]);
+  });
+
+  it("omits tags when a record has none", () => {
+    const result = parseImport(toGenericCsv([RECORDS[0]]));
+    expect("tags" in result.records[0]).toBe(false);
+  });
 });

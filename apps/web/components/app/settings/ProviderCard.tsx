@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { MonoValue } from "@/components/ui/data";
 import { Badge, InlineError } from "@/components/ui/feedback";
 import { PasswordField } from "@/components/ui/field";
+import { Switch } from "@/components/ui/controls";
 import { ConfirmDialog } from "@/components/ui/overlay";
 import { api } from "@/lib/client/api";
 import { useToast } from "@/lib/client/toast";
@@ -51,6 +52,37 @@ export function ProviderCard({
   const [keyValue, setKeyValue] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState(false);
+  const [retentionError, setRetentionError] = useState<string | null>(null);
+  const [savingRetention, setSavingRetention] = useState(false);
+
+  const isEvaluation = preset?.capability === "evaluation";
+
+  async function setRetention(next: boolean) {
+    if (savingRetention) return;
+    setSavingRetention(true);
+    setRetentionError(null);
+    try {
+      const result = await api.updateProvider(provider.id, {
+        zeroDataRetention: next,
+      });
+      onUpdated(result.provider);
+      // The old result no longer describes the settings this provider runs with.
+      setTest({ status: "idle" });
+      toast.success(
+        next ? "Zero Data Retention on" : "Zero Data Retention off",
+        next
+          ? `${provider.label} now asks the gateway to retain nothing.`
+          : `${provider.label} no longer requests zero retention.`,
+      );
+    } catch (caught) {
+      const failure = describeApiFailure(caught);
+      setRetentionError(
+        failureCopy(failure, "The setting did not save. Try again in a moment."),
+      );
+    } finally {
+      setSavingRetention(false);
+    }
+  }
 
   async function saveKey() {
     if (savingKey) return;
@@ -170,6 +202,21 @@ export function ProviderCard({
         </SettingRow>
       </SettingList>
 
+      {isEvaluation ? (
+        <div className="space-y-2 border-t border-line pt-3">
+          <Switch
+            checked={provider.zeroDataRetention}
+            disabled={savingRetention}
+            onChange={(next) => {
+              void setRetention(next);
+            }}
+            label="Zero Data Retention"
+            description="Ask the gateway to retain nothing and train on nothing. Vercel requires a Pro or Enterprise plan for this."
+          />
+          {retentionError ? <InlineError>{retentionError}</InlineError> : null}
+        </div>
+      ) : null}
+
       {keyOpen ? (
         <form
           noValidate
@@ -270,8 +317,16 @@ export function ProviderCard({
       ) : null}
 
       {test.status === "failed" ? (
-        <div role="alert">
+        <div role="alert" className="space-y-2">
           <InlineError>{test.message}</InlineError>
+          {isEvaluation &&
+          provider.zeroDataRetention &&
+          /zero data retention|zdr/i.test(test.message) ? (
+            <p className="text-[12.5px] leading-relaxed text-ink-muted">
+              Zero Data Retention needs a paid Vercel plan. Turn it off above to
+              use this provider — search context is then no longer covered by it.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

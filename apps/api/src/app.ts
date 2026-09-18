@@ -95,6 +95,9 @@ export function createApp(deps: Deps): Hono<AppEnv> {
 
   registerHealthRoutes(app);
 
+  // The default answer for an unmatched route. When the bundle serves the
+  // exported frontend, registerStaticFiles replaces this with one that hands a
+  // browser the app's own 404 page; see ./static.ts.
   app.notFound(() => {
     throw AppError.notFound("Route not found");
   });

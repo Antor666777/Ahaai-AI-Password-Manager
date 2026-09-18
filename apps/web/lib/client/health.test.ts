@@ -58,6 +58,7 @@ function loginItem(
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: new Date(NOW - 10 * DAY).toISOString(),
     ...overrides,
+    tagIds: overrides.tagIds ?? [],
   };
 }
 

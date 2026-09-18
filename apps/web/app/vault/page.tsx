@@ -11,8 +11,11 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
+import { Kbd } from "@/components/ui/data";
 import { Callout, Skeleton, Spinner } from "@/components/ui/feedback";
+import { Dialog } from "@/components/ui/overlay";
 import { api, ApiError } from "@/lib/client/api";
+import { MOD_LABEL, useHotkeys } from "@/lib/client/hotkeys";
 import { useSession } from "@/lib/client/session";
 import { useToast } from "@/lib/client/toast";
 import { useVault, type SearchOutcome } from "@/lib/client/vault";
@@ -30,6 +33,7 @@ import {
   SearchError,
   type SearchErrorKind,
 } from "@/components/app/search/SearchError";
+import { BulkActionBar } from "@/components/app/vault/BulkActionBar";
 import { FilterBar } from "@/components/app/vault/FilterBar";
 import { ItemList } from "@/components/app/vault/ItemList";
 import {
@@ -86,6 +90,51 @@ function compareItems(a: DecryptedItem, b: DecryptedItem): number {
   return a.id.localeCompare(b.id);
 }
 
+/**
+ * The list order. An absent `sort` param means name order, the historical
+ * default, so a default view never writes a redundant filter to the URL.
+ */
+type SortValue = "" | "updated" | "created";
+
+function isSortValue(value: string | null): value is SortValue {
+  return value === "updated" || value === "created";
+}
+
+/**
+ * Sorts a copy of the list. Timestamp order is newest first and falls back to
+ * `compareItems` on a tie, so two items that share a stamp keep a stable,
+ * deterministic place rather than swapping on every render.
+ */
+function sortItems(items: DecryptedItem[], sort: SortValue): DecryptedItem[] {
+  const sorted = [...items];
+  if (sort === "updated") {
+    sorted.sort((a, b) => {
+      const byTime = b.updatedAt.localeCompare(a.updatedAt);
+      return byTime !== 0 ? byTime : compareItems(a, b);
+    });
+  } else if (sort === "created") {
+    sorted.sort((a, b) => {
+      const byTime = b.createdAt.localeCompare(a.createdAt);
+      return byTime !== 0 ? byTime : compareItems(a, b);
+    });
+  } else {
+    sorted.sort(compareItems);
+  }
+  return sorted;
+}
+
+/** The bindings this page installs, in the order the help panel lists them. */
+const SHORTCUTS: { label: string; keys: string[] }[] = [
+  { label: "Open the command palette", keys: [MOD_LABEL, "K"] },
+  { label: "New item", keys: [MOD_LABEL, "N"] },
+  { label: "Focus search", keys: ["/"] },
+  { label: "Show keyboard shortcuts", keys: ["?"] },
+  { label: "Close a dialog or the palette", keys: ["Esc"] },
+];
+
+/** Spoken name for the platform modifier, for the help panel's intro. */
+const MOD_NAME = MOD_LABEL === "⌘" ? "Command" : "Control";
+
 export default function VaultPage() {
   // The filters live in the URL, so reading them has to sit behind Suspense.
   return (
@@ -121,8 +170,13 @@ function VaultWorkspace() {
   const typeParam = searchParams.get("type");
   const typeFilter = isItemType(typeParam) ? typeParam : "";
   const favoritesOnly = searchParams.get("favorites") === "1";
+  // Absent `sort` means the name order, matching every other filter's default.
+  const sortParam = searchParams.get("sort");
+  const sortValue: SortValue = isSortValue(sortParam) ? sortParam : "";
   // Set by the health dashboard so a flagged row opens straight into its item.
   const itemParam = searchParams.get("item");
+  // Set by the command palette so a new item opens straight in the editor.
+  const newParam = searchParams.get("new");
 
   // A folder id that no longer exists would desync the select, so it drops out.
   const folderFilter = useMemo(() => {
@@ -131,13 +185,24 @@ function VaultWorkspace() {
     return vault.folders.some((folder) => folder.id === raw) ? raw : "";
   }, [searchParams, vault.folders]);
 
+  // The same guard for tags: a deleted tag stops filtering rather than hiding
+  // every row behind a pick that no longer means anything.
+  const tagFilter = useMemo(() => {
+    const raw = searchParams.get("tag") ?? "";
+    if (raw === "") return "";
+    return vault.tags.some((tag) => tag.id === raw) ? raw : "";
+  }, [searchParams, vault.tags]);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Bulk selection lives beside the inspector's single id and never drives it.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [favoriteBusyId, setFavoriteBusyId] = useState<string | null>(null);
   const [lastTrashed, setLastTrashed] = useState<DecryptedItem | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [editor, setEditor] = useState<{ item: DecryptedItem | null } | null>(
     null,
   );
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -163,6 +228,52 @@ function VaultWorkspace() {
     setSelectedId(itemParam);
   }, [itemParam, vault.items]);
 
+  // A `?new=1` deep link (from the command palette) opens a blank editor once,
+  // then strips the flag so a reload or a back navigation does not reopen it.
+  useEffect(() => {
+    if (newParam !== "1") return;
+    // Opens a blank editor named by the URL; the flag comes from the query
+    // string rather than from render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEditor({ item: null });
+    // The same helper the rest of the page uses to rewrite the query string.
+    applyParams({ new: null });
+    // `applyParams` is recreated each render, but this one-shot effect must run
+    // only when the flag appears: a second run would reopen the editor. The
+    // lint rule cannot see that the helper is safe to omit here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newParam]);
+
+  // ⌘N / Ctrl+N opens a blank editor. `/` focuses the search field and `?`
+  // reveals the shortcut list; both stay out of text fields so they never
+  // hijack typing. ⌘N is allowed inside a field because it is a modifier chord.
+  useHotkeys([
+    {
+      key: "n",
+      mod: true,
+      allowInInput: true,
+      handler: () => setEditor({ item: null }),
+    },
+    {
+      key: "/",
+      handler: () => {
+        document
+          .querySelector<HTMLInputElement>('input[name="vault-search"]')
+          ?.focus();
+      },
+    },
+    {
+      key: "?",
+      shift: true,
+      handler: () => setHelpOpen(true),
+    },
+    {
+      // A few layouts produce `?` without Shift; accept that shape as well.
+      key: "?",
+      handler: () => setHelpOpen(true),
+    },
+  ]);
+
   const folderNames = useMemo(() => {
     const map = new Map<string, string>();
     for (const folder of vault.folders) map.set(folder.id, folder.name);
@@ -185,16 +296,50 @@ function VaultWorkspace() {
       } else if (folderFilter && item.folderId !== folderFilter) {
         return false;
       }
+      if (tagFilter && !item.tagIds.includes(tagFilter)) return false;
       if (favoritesOnly && !item.favorite) return false;
       return true;
     });
-    return filtered.sort(compareItems);
-  }, [vault.items, typeFilter, folderFilter, favoritesOnly]);
+    return sortItems(filtered, sortValue);
+  }, [
+    vault.items,
+    typeFilter,
+    folderFilter,
+    tagFilter,
+    favoritesOnly,
+    sortValue,
+  ]);
+
+  const visibleIds = useMemo(
+    () => new Set(visibleItems.map((item) => item.id)),
+    [visibleItems],
+  );
+
+  // The visible set changes with a filter, a reload, or a delete. Anything no
+  // longer listed drops out of the selection, so a bulk action can never reach
+  // a row that is off screen.
+  useEffect(() => {
+    // Pruning the selection to the visible ids is the whole point of the effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedIds((current) => {
+      if (current.size === 0) return current;
+      let pruned = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visibleIds.has(id)) next.add(id);
+        else pruned = true;
+      }
+      return pruned ? next : current;
+    });
+  }, [visibleIds]);
 
   const selectedItem = useMemo(
     () => vault.items.find((item) => item.id === selectedId) ?? null,
     [vault.items, selectedId],
   );
+
+  // The inspector opens on the selected row; the trash has its own route.
+  const showInspector = selectedItem !== null;
 
   const searchActive = submitted.length > 0;
 
@@ -236,6 +381,30 @@ function VaultWorkspace() {
     setOutcome(null);
     setSearchError(null);
     setSearching(false);
+  }
+
+  function toggleSelected(item: DecryptedItem, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(item.id);
+      else next.delete(item.id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const item of visibleItems) {
+        if (checked) next.add(item.id);
+        else next.delete(item.id);
+      }
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
   }
 
   /** Saves the other mode, then retries the same search with it. */
@@ -324,9 +493,6 @@ function VaultWorkspace() {
           detail={searchError.detail}
           retrying={false}
           onRetry={() => {
-            // The request token is read inside the click handler, not during
-            // render; the lint rule cannot see through the render-time helper.
-            // eslint-disable-next-line react-hooks/refs
             void runSearch(submitted);
           }}
           switchLabel={
@@ -371,11 +537,16 @@ function VaultWorkspace() {
         <FilterBar
           typeValue={typeFilter}
           folderValue={folderFilter}
+          tagValue={tagFilter}
+          sortValue={sortValue}
           favorites={favoritesOnly}
           count={visibleItems.length}
           folders={vault.folders}
+          tags={vault.tags}
           onTypeChange={(value) => applyParams({ type: value })}
           onFolderChange={(value) => applyParams({ folder: value })}
+          onTagChange={(value) => applyParams({ tag: value })}
+          onSortChange={(value) => applyParams({ sort: value })}
           onFavoritesChange={(value) =>
             applyParams({ favorites: value ? "1" : null })
           }
@@ -419,7 +590,13 @@ function VaultWorkspace() {
         ) : visibleItems.length === 0 ? (
           <NoFilterMatches
             onClear={() =>
-              applyParams({ type: null, folder: null, favorites: null })
+              applyParams({
+                type: null,
+                folder: null,
+                tag: null,
+                sort: null,
+                favorites: null,
+              })
             }
           />
         ) : (
@@ -428,7 +605,10 @@ function VaultWorkspace() {
             folderNameOf={folderNameOf}
             selectedId={selectedId}
             favoriteBusyId={favoriteBusyId}
+            selectedIds={selectedIds}
             onOpen={(item) => setSelectedId(item.id)}
+            onToggleSelected={toggleSelected}
+            onToggleSelectAll={toggleSelectAll}
             onToggleFavorite={(item) => {
               void handleToggleFavorite(item);
             }}
@@ -442,7 +622,13 @@ function VaultWorkspace() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[84rem] px-4 py-6 pb-28 sm:px-6 lg:px-9 lg:pb-9">
+    <div
+      className={cn(
+        "mx-auto w-full max-w-[84rem] px-4 py-6 sm:px-6 lg:px-9",
+        // The bar reserves its own room at the bottom when it is on screen.
+        selectedIds.size > 0 ? "pb-28 lg:pb-28" : "pb-28 lg:pb-9",
+      )}
+    >
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-[17px] font-semibold text-ink">Vault</h1>
@@ -454,14 +640,17 @@ function VaultWorkspace() {
                 } sealed in this vault`}
           </p>
         </div>
-        <Button
-          variant="primary"
-          className="hidden lg:inline-flex"
-          onClick={() => setEditor({ item: null })}
-        >
-          <PlusIcon className="size-4" />
-          New item
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="primary"
+            className="hidden lg:inline-flex"
+            onClick={() => setEditor({ item: null })}
+          >
+            <PlusIcon className="size-4" />
+            New item
+            <Kbd>{MOD_LABEL}N</Kbd>
+          </Button>
+        </div>
       </header>
 
       <div className="mt-5">
@@ -481,14 +670,14 @@ function VaultWorkspace() {
       <div className="mt-6 min-[1180px]:grid min-[1180px]:grid-cols-[minmax(0,1fr)_23rem] min-[1180px]:items-start min-[1180px]:gap-6">
         <section
           aria-label="Items"
-          className={cn("min-w-0", selectedItem && "hidden min-[1180px]:block")}
+          className={cn("min-w-0", showInspector && "hidden min-[1180px]:block")}
         >
           <div className="rounded-lg border border-line bg-surface">
             {searchActive ? renderSearch() : renderList()}
           </div>
         </section>
 
-        {selectedItem ? (
+        {showInspector && selectedItem ? (
           <aside className="mt-6 min-w-0 min-[1180px]:mt-0">
             <ItemInspector
               item={selectedItem}
@@ -519,16 +708,22 @@ function VaultWorkspace() {
         )}
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-paper p-3 lg:hidden">
-        <Button
-          variant="primary"
-          className="w-full"
-          onClick={() => setEditor({ item: null })}
-        >
-          <PlusIcon className="size-4" />
-          New item
-        </Button>
-      </div>
+      {selectedIds.size > 0 ? (
+        <BulkActionBar ids={[...selectedIds]} mode="vault" onClear={clearSelection} />
+      ) : (
+        // The bar takes the small-screen slot, so this stands down while it is
+        // showing rather than stacking two fixed strips on top of each other.
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-paper p-3 lg:hidden">
+          <Button
+            variant="primary"
+            className="w-full"
+            onClick={() => setEditor({ item: null })}
+          >
+            <PlusIcon className="size-4" />
+            New item
+          </Button>
+        </div>
+      )}
 
       {editor ? (
         <ItemEditor
@@ -543,6 +738,36 @@ function VaultWorkspace() {
             setSelectedId(saved.id);
           }}
         />
+      ) : null}
+
+      {helpOpen ? (
+        <Dialog
+          open
+          onClose={() => setHelpOpen(false)}
+          title="Keyboard shortcuts"
+          description={`${MOD_LABEL} is the ${MOD_NAME} key on this device. Single-key shortcuts wait while you are typing in a field; the ${MOD_LABEL} chords do not.`}
+          footer={
+            <Button onClick={() => setHelpOpen(false)}>Close</Button>
+          }
+        >
+          <ul className="space-y-2.5">
+            {SHORTCUTS.map((shortcut) => (
+              <li
+                key={shortcut.label}
+                className="flex items-center justify-between gap-4"
+              >
+                <span className="text-[13px] text-ink-muted">
+                  {shortcut.label}
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {shortcut.keys.map((key) => (
+                    <Kbd key={key}>{key}</Kbd>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Dialog>
       ) : null}
     </div>
   );

@@ -5,17 +5,23 @@ import { getRequestContext } from "@ahaai/core/auth/request-context";
 import { jsonCreated, jsonOk } from "@ahaai/core/http/responses";
 import { parseIdParam, parseJson, parseQuery } from "@ahaai/core/http/validate";
 import { enforceRateLimit } from "@ahaai/core/rate-limit";
-import { bulkCreateSchema, createItemSchema, folderCreateSchema, folderUpdateSchema, listItemsQuerySchema, syncQuerySchema, updateItemSchema } from "@ahaai/core/vault/schemas";
-import { toPublicFolder, toPublicItem } from "@ahaai/core/vault/serializers";
+import { bulkCreateSchema, bulkUpdateSchema, createItemSchema, folderCreateSchema, folderUpdateSchema, listItemRevisionsQuerySchema, listItemsQuerySchema, syncQuerySchema, tagCreateSchema, tagUpdateSchema, updateItemSchema } from "@ahaai/core/vault/schemas";
+import { toPublicFolder, toPublicItem, toPublicRevision, toPublicTag } from "@ahaai/core/vault/serializers";
 import {
+  bulkUpdateItems,
   createFolder,
   createItem,
   createItems,
+  createTag,
   deleteFolder,
+  deleteTag,
   getItem,
   listFolders,
+  listItemRevisions,
   listItems,
+  listTags,
   purgeItem,
+  renameTag,
   restoreItem,
   syncVault,
   trashItem,
@@ -36,6 +42,7 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
       cursor: query.cursor,
       type: query.type,
       folderId: query.folderId,
+      tagId: query.tagId,
       favorite: query.favorite,
       includeTrashed: query.includeTrashed,
     });
@@ -86,6 +93,26 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     return jsonCreated({ items: created.map(toPublicItem) });
   });
 
+  app.post("/vault/items/bulk-update", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const body = await parseJson(c.req.raw, bulkUpdateSchema);
+
+    const updated = await bulkUpdateItems(db, user.id, body);
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "vault.items.bulk_updated",
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
+      metadata: { action: body.action, count: updated.length },
+    });
+
+    return jsonOk({ items: updated.map(toPublicItem) });
+  });
+
   app.get("/vault/items/:id", async (c) => {
     const { db } = c.get("deps");
     const { user } = await requireAuth(db, c.req.raw);
@@ -93,6 +120,20 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
 
     const item = await getItem(db, user.id, id);
     return jsonOk({ item: toPublicItem(item) });
+  });
+
+  app.get("/vault/items/:id/revisions", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const id = parseIdParam(c.req.param("id"));
+    const query = parseQuery(c.req.raw, listItemRevisionsQuerySchema);
+
+    const revisions = await listItemRevisions(db, user.id, id, {
+      limit: query.limit,
+    });
+
+    return jsonOk({ revisions: revisions.map(toPublicRevision) });
   });
 
   app.patch("/vault/items/:id", async (c) => {
@@ -209,12 +250,87 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     return jsonOk({ ok: true });
   });
 
+  app.get("/vault/tags", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+
+    const rows = await listTags(db, user.id);
+    return jsonOk({ tags: rows.map(toPublicTag) });
+  });
+
+  app.post("/vault/tags", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const body = await parseJson(c.req.raw, tagCreateSchema);
+
+    const tag = await createTag(db, user.id, body.nameEnc);
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "vault.tag.created",
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
+      metadata: { tagId: tag.id },
+    });
+
+    return jsonCreated({ tag: toPublicTag(tag) });
+  });
+
+  app.patch("/vault/tags/:id", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const id = parseIdParam(c.req.param("id"));
+    const body = await parseJson(c.req.raw, tagUpdateSchema);
+
+    const tag = await renameTag(db, user.id, id, body.nameEnc);
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "vault.tag.updated",
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
+      metadata: { tagId: tag.id },
+    });
+
+    return jsonOk({ tag: toPublicTag(tag) });
+  });
+
+  app.delete("/vault/tags/:id", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const id = parseIdParam(c.req.param("id"));
+
+    await deleteTag(db, user.id, id);
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "vault.tag.deleted",
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
+      metadata: { tagId: id },
+    });
+
+    return c.body(null, 204);
+  });
+
   app.get("/vault/sync", async (c) => {
     const { db } = c.get("deps");
     const { user } = await requireAuth(db, c.req.raw);
-    const { since } = parseQuery(c.req.raw, syncQuerySchema);
+    const { since, tagId } = parseQuery(c.req.raw, syncQuerySchema);
 
-    const result = await syncVault(db, user.id, since ? new Date(since) : undefined);
+    const result = await syncVault(
+      db,
+      user.id,
+      since ? new Date(since) : undefined,
+      { tagId },
+    );
 
     return jsonOk({
       serverTime: result.serverTime.toISOString(),

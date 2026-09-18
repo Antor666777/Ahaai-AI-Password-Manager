@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "./cn";
 import { Button, type ButtonVariant } from "./button";
 
@@ -28,6 +28,9 @@ export function Dialog({
   className,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  // One dialog can be stacked on another, so the title id has to be per
+  // instance or both would claim the same id and announce the wrong heading.
+  const titleId = useId();
 
   useEffect(() => {
     const node = ref.current;
@@ -54,7 +57,7 @@ export function Dialog({
       onClick={(event) => {
         if (event.target === ref.current) onClose();
       }}
-      aria-labelledby="ahaai-dialog-title"
+      aria-labelledby={titleId}
       className={cn(
         "m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface p-0 text-ink shadow-[var(--shadow-2)]",
         "backdrop:bg-[var(--scrim)]",
@@ -62,7 +65,7 @@ export function Dialog({
       )}
     >
       <div className="p-5">
-        <h2 id="ahaai-dialog-title" className="text-base font-semibold">
+        <h2 id={titleId} className="text-base font-semibold">
           {title}
         </h2>
         {description ? (

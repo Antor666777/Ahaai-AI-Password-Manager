@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useHotkeys } from "@/lib/client/hotkeys";
+import { CommandPalette } from "./CommandPalette";
 import { Drawer } from "./Drawer";
 import { MobileTopBar } from "./MobileTopBar";
 import { Rail } from "./Rail";
@@ -12,6 +14,18 @@ import { Rail } from "./Rail";
  */
 export function VaultShell({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // ⌘K / Ctrl+K opens the palette from anywhere, including while a field has
+  // focus, so it works as the one universal entry point.
+  useHotkeys([
+    {
+      key: "k",
+      mod: true,
+      allowInInput: true,
+      handler: () => setPaletteOpen(true),
+    },
+  ]);
 
   // A drawer opened on a phone must not linger as a hidden modal when the
   // window grows past the rail breakpoint.
@@ -57,6 +71,10 @@ export function VaultShell({ children }: { children: ReactNode }) {
           onClose={() => setDrawerOpen(false)}
         />
       </Drawer>
+
+      {paletteOpen ? (
+        <CommandPalette onClose={() => setPaletteOpen(false)} />
+      ) : null}
     </div>
   );
 }

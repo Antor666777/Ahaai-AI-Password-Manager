@@ -1,6 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Hono } from "hono";
+import { AppError } from "@ahaai/core/http/errors";
+import { API_BASE } from "./app";
 import type { Config } from "./config";
 import type { AppEnv } from "./types";
 
@@ -41,6 +43,27 @@ export async function registerStaticFiles(
       },
     }),
   );
+
+  // serveStatic falls through when nothing matches, so an unmatched frontend
+  // route ends up in notFound. This is the only place the exported 404 page can
+  // be served from: this module owns it, and the core app must not touch the
+  // filesystem. Registering a handler here supersedes the JSON one in
+  // createApp, which stays the answer for the API and for any client that is
+  // not asking for HTML.
+  const notFoundPage = resolve(staticRoot, "404.html");
+  const page = existsSync(notFoundPage)
+    ? readFileSync(notFoundPage, "utf8")
+    : null;
+
+  if (page !== null) {
+    app.notFound((c) => {
+      const wantsHtml = (c.req.header("accept") ?? "").includes("text/html");
+      if (!wantsHtml || c.req.path.startsWith(API_BASE)) {
+        throw AppError.notFound("Route not found");
+      }
+      return c.html(page, 404);
+    });
+  }
 
   return true;
 }

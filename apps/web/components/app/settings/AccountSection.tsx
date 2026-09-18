@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { CopyButton, MonoValue } from "@/components/ui/data";
 import { useSession } from "@/lib/client/session";
 import { useToast } from "@/lib/client/toast";
+import { ChangeEmailDialog } from "./ChangeEmailDialog";
 import { ChangeMasterPasswordDialog } from "./ChangeMasterPasswordDialog";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import {
   ActionRow,
   SettingList,
@@ -23,6 +25,8 @@ export function AccountSection() {
   const { user, lock, logout } = useSession();
 
   const [changing, setChanging] = useState(false);
+  const [changingEmail, setChangingEmail] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [freshStamp, setFreshStamp] = useState<string | null>(null);
 
@@ -98,6 +102,13 @@ export function AccountSection() {
 
       <div className="panel px-4 sm:px-5">
         <ActionRow
+          title="Change email address"
+          description="Moves this account to a new address. Ahaai re-wraps the vault key under the new address, and every other session is signed out. This device stays signed in."
+          control={
+            <Button onClick={() => setChangingEmail(true)}>Change email</Button>
+          }
+        />
+        <ActionRow
           title="Change master password"
           description="Re-seals the vault under a new password. Every other session is signed out, and this device stays signed in."
           control={
@@ -133,11 +144,29 @@ export function AccountSection() {
         </p>
       ) : null}
 
+      <div className="panel border-danger/40 p-4 sm:p-5">
+        <h3 className="text-[13px] font-semibold text-danger">Danger zone</h3>
+        <p className="mt-1 max-w-[52ch] text-[12.5px] leading-relaxed text-ink-muted">
+          Deleting the account removes the vault, its items, the providers and
+          every session. There is no recovery key, so this cannot be undone.
+        </p>
+        <div className="mt-3">
+          <Button variant="danger" onClick={() => setDeleting(true)}>
+            Delete account
+          </Button>
+        </div>
+      </div>
+
       <ChangeMasterPasswordDialog
         open={changing}
         onClose={() => setChanging(false)}
         onChanged={(result) => setFreshStamp(result.securityStamp)}
       />
+      <ChangeEmailDialog
+        open={changingEmail}
+        onClose={() => setChangingEmail(false)}
+      />
+      <DeleteAccountDialog open={deleting} onClose={() => setDeleting(false)} />
     </SettingsSection>
   );
 }

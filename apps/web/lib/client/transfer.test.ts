@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildEncryptedExport, readEncryptedExport } from "./transfer";
-import type { DecryptedItem, LoginPayload } from "./types";
+import { parseCsv } from "@ahaai/core/transfer";
+import { buildCsvExport, buildEncryptedExport, readEncryptedExport } from "./transfer";
+import type { DecryptedItem, DecryptedTag, LoginPayload } from "./types";
 
 const PASSPHRASE = "a long enough export passphrase";
 
@@ -12,6 +13,7 @@ function loginItem(): DecryptedItem {
     notes: "work account",
     data: { username: "octocat", password: "hunter2" },
     folderId: null,
+    tagIds: [],
     favorite: false,
     reprompt: false,
     revision: 1,
@@ -50,4 +52,54 @@ describe("encrypted export", () => {
       readEncryptedExport('{"format":"something-else"}', PASSPHRASE),
     ).rejects.toThrow(/Ahaai/i);
   }, 30_000);
+});
+
+describe("generic CSV export carries tags", () => {
+  const TAGS: DecryptedTag[] = [
+    {
+      id: "t1",
+      name: "Work",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      id: "t2",
+      name: "Personal",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ];
+
+  it("writes decrypted tag names and omits the cell for an untagged item", () => {
+    const tagged: DecryptedItem = {
+      ...loginItem(),
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "GitHub",
+      tagIds: ["t1", "t2"],
+    };
+    const untagged: DecryptedItem = {
+      ...loginItem(),
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "GitLab",
+      tagIds: [],
+    };
+
+    const csv = buildCsvExport([tagged, untagged], [], "generic", TAGS);
+    const table = parseCsv(csv);
+    const header = table[0];
+    const tagsIndex = header.indexOf("tags");
+    const nameIndex = header.indexOf("name");
+    expect(tagsIndex).toBeGreaterThanOrEqual(0);
+
+    const rowFor = (name: string) =>
+      table.find((row) => row[nameIndex] === name);
+    const taggedCell = rowFor("GitHub")?.[tagsIndex];
+    const untaggedCell = rowFor("GitLab")?.[tagsIndex];
+
+    // The names, not the ids, travel in the column, newline-joined.
+    expect(taggedCell).toBe("Work\nPersonal");
+    expect(csv).toContain("Work");
+    // An item with no tags leaves the cell empty rather than writing a stub.
+    expect(untaggedCell).toBe("");
+  });
 });

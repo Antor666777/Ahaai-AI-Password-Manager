@@ -32,6 +32,8 @@ export interface ApiItem {
   notesEnc: string | null;
   dataEnc: string;
   folderId: string | null;
+  /** Ids of the tags assigned to this item. Tags are relational, not sealed. */
+  tagIds: string[];
   favorite: boolean;
   reprompt: boolean;
   revision: number;
@@ -47,6 +49,30 @@ export interface ApiFolder {
   updatedAt: string;
 }
 
+export interface ApiTag {
+  id: string;
+  nameEnc: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A snapshot of an item's ciphertext, written just before an update overwrites
+ * it. The field AAD binds to the item id and not to the revision, so a stored
+ * snapshot stays decryptable verbatim and can be restored by a normal item
+ * update rather than a re-seal.
+ */
+export interface ApiRevision {
+  id: string;
+  itemId: string;
+  /** The revision this snapshot held before the update replaced it. */
+  revision: number;
+  nameEnc: string;
+  notesEnc: string | null;
+  dataEnc: string;
+  createdAt: string;
+}
+
 export interface ApiProvider {
   id: string;
   presetId: string;
@@ -54,6 +80,8 @@ export interface ApiProvider {
   baseUrl: string | null;
   defaultModel: string | null;
   isLocal: boolean;
+  /** Whether evaluation calls ask the gateway for zero retention. */
+  zeroDataRetention: boolean;
   hasApiKey: boolean;
   apiKeyMask: string | null;
   createdAt: string;
@@ -70,6 +98,8 @@ export interface ProviderPreset {
   requiresKey: boolean;
   /** A key is not required, but the field is offered anyway. */
   keyOptional: boolean;
+  /** Absent means a language model; `evaluation` is a decision model. */
+  capability?: "language" | "evaluation";
 }
 
 export interface ApiSettings {
@@ -100,10 +130,14 @@ export interface ApiAuditEvent {
   createdAt: string;
 }
 
+/** How sure the search is that a returned credential is the one you meant. */
+export type MatchConfidence = "strong" | "possible";
+
 export interface ApiSearchMatch {
   token: string;
   reason: string;
   score: number;
+  confidence: MatchConfidence;
 }
 
 export interface ApiSearchResult {
@@ -112,6 +146,13 @@ export interface ApiSearchResult {
   presetId: string;
   isLocal: boolean;
   mode: AiMode;
+  /** `evaluation` means a decision model ranked the results. */
+  engine?: "evaluation" | "language";
+  intent?: string;
+  /** Whether the decision model ran with zero retention. */
+  zeroDataRetention?: boolean;
+  /** How many candidates the decision engine was asked about. */
+  shortlistCount?: number;
   truncated: boolean;
 }
 
@@ -168,6 +209,7 @@ export interface DecryptedItem {
   notes: string;
   data: ItemPayload;
   folderId: string | null;
+  tagIds: string[];
   favorite: boolean;
   reprompt: boolean;
   revision: number;
@@ -177,6 +219,13 @@ export interface DecryptedItem {
 }
 
 export interface DecryptedFolder {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DecryptedTag {
   id: string;
   name: string;
   createdAt: string;

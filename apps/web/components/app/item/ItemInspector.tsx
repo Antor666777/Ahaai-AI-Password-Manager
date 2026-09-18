@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   generateTotp,
   parseOtpauthUri,
@@ -15,10 +16,27 @@ import type {
   LoginPayload,
   SecureNotePayload,
 } from "@/lib/client/types";
-import { BackIcon, TrashIcon } from "@/components/app/shell/Icons";
+import { useVault } from "@/lib/client/vault";
+import {
+  BackIcon,
+  EyeIcon,
+  HistoryIcon,
+  LockIcon,
+  TagIcon,
+  TrashIcon,
+} from "@/components/app/shell/Icons";
 import { useNow } from "@/components/app/security/format";
-import { FieldRow, ValueRow, SecretRow } from "./SecretField";
+import { MonoValue } from "@/components/ui/data";
+import {
+  FieldRow,
+  ValueRow,
+  SecretRow,
+  maskSecret,
+  useRepromptGate,
+} from "./SecretField";
+import { RepromptDialog } from "./RepromptDialog";
 import { TypeGlyph } from "./TypeGlyph";
+import { HistoryDialog } from "./HistoryDialog";
 import { formatDateTime, typeLabel } from "./meta";
 
 type RowSpec =
@@ -130,10 +148,51 @@ const DETAIL_HEADING: Record<DecryptedItem["type"], string> = {
  * code and the countdown honest through the period boundary; a stored secret is
  * only ever read, never written back. The URI carries any custom
  * digits/period/algorithm, so a non-default account still produces valid codes.
+ *
+ * On a reprompt item the code is a secret too, so it stays masked until the
+ * master password is confirmed.
  */
-function LiveTotpRow({ label, uri }: { label: string; uri: string }) {
+function LiveTotpRow({
+  label,
+  uri,
+  reprompt = false,
+}: {
+  label: string;
+  uri: string;
+  reprompt?: boolean;
+}) {
+  const gate = useRepromptGate(reprompt);
   const now = useNow(1_000);
   const at = Math.floor(now / 1000);
+
+  if (!gate.unlocked) {
+    return (
+      <>
+        <FieldRow label={label}>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1">
+              <MonoValue value={maskSecret(uri)} />
+            </span>
+            <IconButton
+              label={`Show ${label.toLowerCase()}`}
+              size="sm"
+              onClick={gate.openPrompt}
+              className="min-h-11 min-w-11"
+            >
+              <EyeIcon className="size-4" />
+            </IconButton>
+          </div>
+        </FieldRow>
+        {gate.promptOpen ? (
+          <RepromptDialog
+            open
+            onClose={gate.closePrompt}
+            onVerified={gate.closePrompt}
+          />
+        ) : null}
+      </>
+    );
+  }
 
   const params = parseOtpauthUri(uri);
   let code: string | null = null;
@@ -209,6 +268,14 @@ export function ItemInspector({
   onBack,
 }: ItemInspectorProps) {
   const rows = rowsFor(item);
+  const vault = useVault();
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Tags are relational, so an id can outlive its tag. A dangling id is skipped
+  // rather than rendered as a blank chip; the inspector is read-only.
+  const tagNames = item.tagIds
+    .map((id) => vault.tags.find((tag) => tag.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
 
   return (
     <article className="rounded-lg border border-line bg-surface">
@@ -224,6 +291,18 @@ export function ItemInspector({
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge tone="neutral">{typeLabel(item.type)}</Badge>
             {item.favorite ? <Badge tone="accent">Favorite</Badge> : null}
+            {item.reprompt ? (
+              <Badge tone="warning">
+                <LockIcon className="size-3" />
+                Master password required
+              </Badge>
+            ) : null}
+            {tagNames.map((name) => (
+              <Badge key={`tag-${name}`} tone="neutral">
+                <TagIcon className="size-3" />
+                {name}
+              </Badge>
+            ))}
             <span className="min-w-0 truncate text-[12.5px] text-ink-faint">
               {folderName ?? "No folder"}
             </span>
@@ -261,12 +340,14 @@ export function ItemInspector({
                   key={`${row.label}-${index}`}
                   label={row.label}
                   uri={row.uri}
+                  reprompt={item.reprompt}
                 />
               ) : row.kind === "secret" ? (
                 <SecretRow
                   key={`${row.label}-${index}`}
                   label={row.label}
                   value={row.value}
+                  reprompt={item.reprompt}
                 />
               ) : (
                 <ValueRow
@@ -316,7 +397,20 @@ export function ItemInspector({
           <TrashIcon className="size-4" />
           Move to trash
         </Button>
+        <IconButton
+          label="View item history"
+          className="ms-auto"
+          onClick={() => setHistoryOpen(true)}
+        >
+          <HistoryIcon className="size-4" />
+        </IconButton>
       </footer>
+
+      <HistoryDialog
+        item={item}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+      />
     </article>
   );
 }
