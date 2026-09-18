@@ -45,6 +45,12 @@ export interface TestApi {
 
 export interface CreateTestApiOptions {
   fetchImpl?: typeof fetch;
+  /** Override the injected database (e.g. to simulate a downed Postgres). */
+  db?: Database;
+  /** Inject a Redis readiness probe, standing in for a configured REDIS_URL. */
+  redisHealthProbe?: () => Promise<void>;
+  /** Extra environment for `loadConfig`, on top of the ambient `process.env`. */
+  env?: Record<string, string | undefined>;
 }
 
 export async function createTestApi(
@@ -56,6 +62,7 @@ export async function createTestApi(
 
   const config = loadConfig({
     ...process.env,
+    ...options.env,
     // A wildcard for extensions, so the exact extension id never has to be
     // listed, plus one explicitly trusted separate frontend origin.
     CORS_ALLOWED_ORIGINS: [
@@ -68,8 +75,9 @@ export async function createTestApi(
   const app = createApp(
     createDeps({
       config,
-      db: ctx.db as unknown as Database,
+      db: options.db ?? (ctx.db as unknown as Database),
       fetchImpl: options.fetchImpl,
+      redisHealthProbe: options.redisHealthProbe,
     }),
   );
 

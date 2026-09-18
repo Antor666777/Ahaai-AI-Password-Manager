@@ -7,7 +7,7 @@ Your master password, your vault key, and every plaintext credential stay in the
 stores ciphertext it cannot read, and the AI never receives a real credential.
 
 **Status:** the functional core, the HTTP APIs, the interface, and the self-hosting packaging are all
-in place, covered by 239 automated tests.
+in place, covered by 342 automated tests.
 
 The API is a standalone service, not part of the frontend. That is what lets a browser extension or
 any other client talk to it without depending on Next.js, and it is what makes self-hosting a single
@@ -236,7 +236,8 @@ that sets `omit=dev` silently skips dev dependencies, and `npm install --include
 | `/` | Landing and auth. |
 | `/unlock` | Master password unlock. The key lives only in that tab, in memory. |
 | `/vault` | The vault: AI search, filters, item list, inspector, and editor. |
-| `/vault/settings` | Search mode, BYOK providers, and account access. |
+| `/vault/health` | Password health: breached, reused, weak and stale credentials. |
+| `/vault/settings` | Search mode, BYOK providers, import and export, and account access. |
 | `/vault/security` | Active sessions and the audit timeline. |
 | `/vault/trash` | Restore or purge, with confirmation that names the item. |
 
@@ -273,10 +274,12 @@ CORS and the origin check, and is never an authorization boundary.
 
 ## Testing
 
-`npm test` runs 239 tests with Vitest against an in-memory Postgres through PGlite, so no external
+`npm test` runs 342 tests with Vitest against an in-memory Postgres through PGlite, so no external
 services are needed. Coverage includes the key derivation and split, AEAD envelopes, tokenization,
 session rotation and reuse detection, vault services with optimistic concurrency, the AI search
-pipeline, the HIBP proxy, the rate limiter backends, and the provider and mode resolution.
+pipeline, the HIBP proxy, the rate limiter backends, the provider and mode resolution, RFC 6238 TOTP
+against the published vectors, the Bitwarden, LastPass, 1Password and KeePass import mappers, the
+password-health classifier, the encrypted export envelope, and the readiness probe.
 
 The API routes are covered end to end by calling the Hono app directly with a real database and no
 network: registration, login and logout, the whole item lifecycle including a stale-revision conflict,
@@ -293,7 +296,8 @@ been exercised against a live provider, because a provider key is required for t
 - **Account recovery.** A direct consequence of zero-knowledge: a lost master password means lost
   data. There is no reset that could not also be used by someone else.
 - Email verification and password reset, which need outbound email.
-- Two-factor authentication. TOTP is the natural next step.
+- Two-factor authentication on the account itself. Login items already store a TOTP secret and
+  generate live codes locally; requiring a second factor to sign in is the remaining step.
 - Organizations, collections, sharing, and attachments.
 - Streaming chat over the vault.
 - Narrow-viewport verification below 1024px. The automation used exposes no viewport control, so

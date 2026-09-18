@@ -8,6 +8,7 @@ import { createTestDb, type TestDb } from "@ahaai/testing/helpers/db";
 import {
   createFolder,
   createItem,
+  createItems,
   deleteFolder,
   getItem,
   listFolders,
@@ -334,5 +335,94 @@ describe("vault service", () => {
     const result = await syncVault(ctx.db, user.id);
     expect(result.items).toHaveLength(1);
     expect(result.folders).toHaveLength(1);
+  });
+
+  it("bulk-creates items in one transaction and returns them in order", async () => {
+    const user = await createTestUser(ctx.db, { email: "bulk1@example.com" });
+    const ids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ];
+
+    const created = await createItems(
+      ctx.db,
+      user.id,
+      ids.map((id, index) => ({
+        id,
+        type: "login" as const,
+        nameEnc: envelope(`name-${index}`),
+        dataEnc: envelope(`data-${index}`),
+        favorite: index === 0,
+      })),
+    );
+
+    expect(created.map((item) => item.id)).toEqual(ids);
+    expect(created.every((item) => item.userId === user.id)).toBe(true);
+    expect(created.every((item) => item.revision === 1)).toBe(true);
+    expect(created[0].favorite).toBe(true);
+
+    const listed = await listItems(ctx.db, user.id, { limit: 100 });
+    expect(listed.items).toHaveLength(3);
+  });
+
+  it("rolls the whole batch back when a folder is not owned by the caller", async () => {
+    const alice = await createTestUser(ctx.db, {
+      email: "bulk-alice@example.com",
+    });
+    const bob = await createTestUser(ctx.db, { email: "bulk-bob@example.com" });
+    const folder = await createFolder(ctx.db, alice.id, envelope("alice-folder"));
+
+    await expect(
+      createItems(ctx.db, bob.id, [
+        { type: "login", nameEnc: envelope(), dataEnc: envelope() },
+        {
+          type: "login",
+          nameEnc: envelope(),
+          dataEnc: envelope(),
+          folderId: folder.id,
+        },
+      ]),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // The first, folder-free row must not survive the failed transaction.
+    expect(
+      (await listItems(ctx.db, bob.id, { limit: 100 })).items,
+    ).toHaveLength(0);
+  });
+
+  it("bulk-creates into a folder the caller owns", async () => {
+    const user = await createTestUser(ctx.db, {
+      email: "bulk-folder@example.com",
+    });
+    const folder = await createFolder(ctx.db, user.id, envelope("mine"));
+
+    const created = await createItems(ctx.db, user.id, [
+      {
+        type: "card",
+        nameEnc: envelope(),
+        dataEnc: envelope(),
+        folderId: folder.id,
+      },
+      {
+        type: "secure_note",
+        nameEnc: envelope(),
+        dataEnc: envelope(),
+        folderId: folder.id,
+      },
+    ]);
+
+    expect(created).toHaveLength(2);
+    expect(created.every((item) => item.folderId === folder.id)).toBe(true);
+    expect(
+      (
+        await listItems(ctx.db, user.id, { limit: 100, folderId: folder.id })
+      ).items,
+    ).toHaveLength(2);
+  });
+
+  it("returns an empty list for an empty batch", async () => {
+    const user = await createTestUser(ctx.db, { email: "bulk-empty@example.com" });
+    expect(await createItems(ctx.db, user.id, [])).toEqual([]);
   });
 });

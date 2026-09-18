@@ -22,8 +22,13 @@ export const SERVER_AUTH_PARAMS: ServerAuthParams = {
 
 export const AUTH_SALT_BYTES = 16;
 
-function pepper(): Uint8Array {
-  const value = process.env.AUTH_PEPPER;
+export interface PepperOptions {
+  /** Overrides AUTH_PEPPER from the environment. */
+  pepper?: string;
+}
+
+function pepper(options: PepperOptions = {}): Uint8Array {
+  const value = options.pepper ?? process.env.AUTH_PEPPER;
   if (!value || value.length < 16) {
     throw new CryptoError(
       "INVALID_PARAMS",
@@ -45,6 +50,7 @@ export async function hashAuthHash(
   authHash: string,
   saltBase64: string,
   params: ServerAuthParams = SERVER_AUTH_PARAMS,
+  options: PepperOptions = {},
 ): Promise<string> {
   if (!isValidAuthHash(authHash)) {
     throw new CryptoError("INVALID_PARAMS", "Auth hash must be 64 hex characters");
@@ -65,7 +71,7 @@ export async function hashAuthHash(
     m: params.memoryKiB,
     p: params.parallelism,
     dkLen: 32,
-    key: pepper(),
+    key: pepper(options),
   });
 
   return bytesToHex(derived);
@@ -76,8 +82,9 @@ export async function verifyAuthHash(
   saltBase64: string,
   expectedHash: string,
   params: ServerAuthParams = SERVER_AUTH_PARAMS,
+  options: PepperOptions = {},
 ): Promise<boolean> {
-  const actual = await hashAuthHash(authHash, saltBase64, params);
+  const actual = await hashAuthHash(authHash, saltBase64, params, options);
   return constantTimeEqual(hexToBytes(actual), hexToBytes(expectedHash));
 }
 
@@ -85,11 +92,16 @@ export async function verifyAuthHash(
  * Performs a throwaway hash so unknown-user logins take a similar amount of
  * time as known-user logins, blunting user enumeration via timing.
  */
-export async function dummyVerify(authHash: string): Promise<void> {
+export async function dummyVerify(
+  authHash: string,
+  options: PepperOptions = {},
+): Promise<void> {
   try {
     await hashAuthHash(
       isValidAuthHash(authHash) ? authHash : "0".repeat(64),
       bytesToBase64(randomBytes(AUTH_SALT_BYTES)),
+      SERVER_AUTH_PARAMS,
+      options,
     );
   } catch {
     // Intentionally ignored: this only burns time.

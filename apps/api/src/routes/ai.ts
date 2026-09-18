@@ -45,7 +45,9 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "ai.provider.created",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { providerId: provider.id, presetId: provider.presetId },
     });
 
@@ -63,7 +65,9 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "ai.provider.updated",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { providerId: provider.id },
     });
 
@@ -81,7 +85,9 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
       userId: user.id,
       type: "ai.provider.deleted",
       severity: "warning",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { providerId: id },
     });
 
@@ -126,7 +132,9 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "ai.search.performed",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: {
         mode: body.mode,
         presetId: result.presetId,

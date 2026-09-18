@@ -71,6 +71,20 @@ describe("loadConfig", () => {
     expect(config.trustProxy).toBe(false);
     expect(config.serveStatic).toBe(true);
   });
+
+  it("exposes the security-relevant values the request path threads through", () => {
+    const config = loadConfig({
+      ...baseEnv(),
+      SESSION_TTL_DAYS: "7",
+      TRUST_PROXY: "0",
+      COOKIE_SECURE: "true",
+    });
+
+    expect(config.authPepper).toBe(PEPPER);
+    expect(config.sessionTtlDays).toBe(7);
+    expect(config.trustProxy).toBe(false);
+    expect(config.cookieSecure).toBe(true);
+  });
 });
 
 describe("parseOrigins", () => {

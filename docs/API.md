@@ -1,7 +1,7 @@
 # Ahaai API reference
 
 The API is a standalone Hono service. Everything lives under `/api/v1`, except the unversioned
-`GET /health`, which container health checks rely on.
+`GET /health` and `GET /health/ready`, which container health checks rely on.
 
 Base URL in development: `http://localhost:3100/api/v1`. In the self-hosted bundle the API also serves
 the frontend, so it is whatever origin you deployed to.
@@ -23,6 +23,10 @@ Error shape, unchanged across every endpoint:
 | `UNPROCESSABLE` | 422 | Well-formed but semantically rejected. |
 | `UPSTREAM` | 502 | HIBP or an AI provider failed. |
 | `INTERNAL` | 500 | Never carries internal details. |
+
+Every `/api/v1` request is subject to a coarse per-IP ceiling (`global`, 300/min) before the route's
+own rule applies, so an endpoint without a named rule of its own is still throttled. Limits are shared
+through Redis when `REDIS_URL` is set, and held per instance otherwise.
 
 ---
 
@@ -79,8 +83,30 @@ Preflight is answered with `204` and `Access-Control-Max-Age: 600`.
 | Method | Path | Auth |
 | --- | --- | --- |
 | GET | `/health` | no |
+| GET | `/health/ready` | no |
 
-`{ "status": "ok", "service": "ahaai-password-manager", "time": "<iso>" }`
+`/health` is a cheap liveness check that never touches a dependency:
+
+```json
+{ "status": "ok", "service": "ahaai-password-manager", "version": "0.1.0", "uptimeMs": 12345, "time": "<iso>" }
+```
+
+`/health/ready` runs a real check and answers `200`, or `503` when a dependency is down:
+
+```json
+{
+  "status": "ok",
+  "service": "ahaai-password-manager",
+  "version": "0.1.0",
+  "uptimeMs": 12345,
+  "checks": { "database": { "status": "up", "latencyMs": 1 } },
+  "rateLimiter": { "backend": "memory", "degraded": false }
+}
+```
+
+A `redis` entry appears only when `REDIS_URL` is set, and `rateLimiter.degraded` is `true` when Redis
+was configured but unreachable, which means limits are per instance rather than shared. The failure
+reason is written to the log and never returned, because the route is unauthenticated.
 
 ---
 
@@ -168,6 +194,7 @@ All endpoints require a session. Items are opaque ciphertext to the server.
 | --- | --- | --- |
 | GET | `/vault/items` | `limit`, `cursor`, `type`, `folderId`, `favorite`, `includeTrashed` |
 | POST | `/vault/items` | create |
+| POST | `/vault/items/bulk` | create 1–500 items in one transaction |
 | GET | `/vault/items/:id` | |
 | PATCH | `/vault/items/:id` | requires `revision` (optimistic concurrency) |
 | DELETE | `/vault/items/:id` | soft delete, moves to trash |
@@ -206,6 +233,54 @@ Item response:
 
 `409 CONFLICT` when `revision` is stale; the details carry `currentRevision`. Soft-deleted items appear
 as tombstones in `/sync`; purged items require a full resync to notice.
+
+### POST /vault/items/bulk
+
+Creates many items in one request and one transaction, so a large import does not fire N sequential
+writes (and does not trip the `vault` rate limit per item).
+
+```json
+{
+  "items": [
+    {
+      "id": "<uuid, optional, client generated for AAD>",
+      "type": "login",
+      "nameEnc": "v1.<base64>.<base64>",
+      "dataEnc": "v1.<base64>.<base64>",
+      "notesEnc": null,
+      "folderId": null,
+      "favorite": false,
+      "reprompt": false
+    }
+  ]
+}
+```
+
+`201` with `{ "items": [ <item response>, ... ] }` in request order. Each element is the same shape as
+the single-item response, and every `id` must be unique within the request. `400` when the array is
+empty, longer than 500, or malformed. Any item referencing a folder the caller does not own fails the
+whole request with `404` and rolls the transaction back.
+
+---
+
+## Import / export formats
+
+Parsing and serialisation live in `@ahaai/core/transfer` as pure functions; the browser runs them, so a
+CSV never reaches the API. `parseImport(content, format?)` sniffs the header when `format` is `"auto"`.
+
+| Format | Detected by | Notes |
+| --- | --- | --- |
+| Bitwarden | `login_uri` / `login_username` / `login_password` / `login_totp` columns | login, card, identity and note rows; `fields` packs custom fields as `Label: value` lines |
+| LastPass | `url` plus `grouping` or `extra` | logins only; `grouping` is the folder |
+| 1Password | `Title` plus `OTPAuth`, or `Title`/`Username`/`Password` without `Group` | logins only |
+| KeePass | `Group`+`Title`, or `Account`+`Login Name` | KeePassXC and KeePass 2.x layouts |
+| generic | anything else with a name column | also reads the output of the generic export |
+
+Malformed rows are collected into `skipped` rather than throwing. Exporters: `toBitwardenCsv` and
+`toGenericCsv` (both plaintext). The web app's encrypted JSON export is a small
+`{ format: "ahaai-export", version, createdAt, itemCount, kdfParams, payload }` envelope, where `payload`
+is the AES-256-GCM seal of the serialized records under a key derived from a user passphrase with the
+envelope's own `kdfParams`; the passphrase is independent of the master password.
 
 ---
 
@@ -290,13 +365,24 @@ Notes:
 
 ## Pwned Passwords
 
-`GET /pwned/range?prefix=ABCDE`, no auth, rate `pwned` 60/min/IP.
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/pwned/range?prefix=ABCDE` | no | rate `pwned` 60/min/IP |
+| POST | `/pwned/range` | no | rate `pwnedBatch` 20/min/IP; body `{ "prefixes": ["ABCDE", ...] }`, 1 to 200 entries |
 
 Only the 5-character SHA-1 prefix goes upstream, which is what k-anonymity means here. Results are
 cached for 24 hours.
 
 ```json
 { "prefix": "ABCDE", "suffixes": "0018A45C4D1DEF81644B54AB7F969B88D65:3", "cached": false }
+```
+
+`POST` returns the same shapes in one call. Prefixes are validated, deduplicated and capped at 200,
+and the upstream work fans out through a small pool, which is what makes a vault-wide sweep one round
+trip instead of one request per password:
+
+```json
+{ "ranges": [ { "prefix": "ABCDE", "suffixes": "0018A45C4D1DEF81644B54AB7F969B88D65:3", "cached": false } ] }
 ```
 
 The client hashes the password locally, sends only the prefix, and compares the returned suffixes

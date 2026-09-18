@@ -113,3 +113,26 @@ export async function createRedisRateLimiter(url: string): Promise<RateLimiter> 
 
   return new RedisRateLimiter(store);
 }
+
+/**
+ * A one-shot health probe for the Redis backend: connects, sends PING and tears
+ * the connection down. Resolves when Redis answers and rejects otherwise, so the
+ * readiness route can report the dependency without owning a client.
+ */
+export function createRedisPing(url: string): () => Promise<void> {
+  return async () => {
+    const { default: Redis } = await import("ioredis");
+    const client = new Redis(url, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      connectTimeout: 2_000,
+    });
+    try {
+      await client.connect();
+      await client.ping();
+    } finally {
+      client.disconnect();
+    }
+  };
+}

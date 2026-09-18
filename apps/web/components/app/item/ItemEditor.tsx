@@ -23,6 +23,7 @@ import {
   emptyFields,
   fieldsFromItem,
   isItemType,
+  normalizeTotpInput,
   typeLabel,
   type DraftFields,
 } from "./meta";
@@ -59,6 +60,7 @@ export function ItemEditor({
         },
   );
   const [nameError, setNameError] = useState<string | null>(null);
+  const [totpError, setTotpError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -81,6 +83,13 @@ export function ItemEditor({
       return;
     }
     setNameError(null);
+
+    const totp = normalizeTotpInput(fields.totp);
+    if (!totp.ok) {
+      setTotpError(totp.error ?? "Enter a usable two-factor secret.");
+      return;
+    }
+    setTotpError(null);
 
     const draft: ItemDraft = {
       type: fields.type,
@@ -219,13 +228,18 @@ export function ItemEditor({
                 </div>
 
                 <PasswordField
-                  label="One-time code"
+                  label="Two-factor secret"
                   name="totp"
-                  autoComplete="one-time-code"
-                  hint="The code from your authenticator app, if this login uses one."
+                  autoComplete="off"
+                  hint="Paste the base32 secret or the otpauth:// link from your authenticator app. Ahaai generates the live code, so the rotating code itself is not needed."
                   value={fields.totp}
                   disabled={saving}
-                  onChange={(value) => update("totp", value)}
+                  error={totpError}
+                  onChange={(value) => {
+                    update("totp", value);
+                    const result = normalizeTotpInput(value);
+                    setTotpError(result.ok ? null : (result.error ?? null));
+                  }}
                 />
 
                 <TextArea

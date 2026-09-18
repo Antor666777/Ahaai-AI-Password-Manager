@@ -1,3 +1,8 @@
+import {
+  buildOtpauthUri,
+  normalizeBase32,
+  parseOtpauthUri,
+} from "@ahaai/core/crypto/totp";
 import type {
   CardPayload,
   CustomField,
@@ -54,7 +59,10 @@ export interface DraftFields {
   favorite: boolean;
   username: string;
   password: string;
+  /** Raw two-factor input: a base32 secret or a full otpauth:// URI. */
   totp: string;
+  /** Legacy stored code carried through unchanged so editing cannot drop it. */
+  totpLegacy: string;
   /** One address per line. */
   urls: string;
   cardBrand: string;
@@ -79,6 +87,7 @@ export function emptyFields(type: ItemType): DraftFields {
     username: "",
     password: "",
     totp: "",
+    totpLegacy: "",
     urls: "",
     cardBrand: "",
     cardHolder: "",
@@ -118,7 +127,8 @@ export function fieldsFromItem(item: DecryptedItem): DraftFields {
       const data = item.data as LoginPayload;
       fields.username = data.username ?? "";
       fields.password = data.password ?? "";
-      fields.totp = data.totp ?? "";
+      fields.totp = data.totpUri ?? "";
+      fields.totpLegacy = data.totp ?? "";
       fields.urls = (data.urls ?? []).join("\n");
       break;
     }
@@ -149,6 +159,41 @@ export function fieldsFromItem(item: DecryptedItem): DraftFields {
   return fields;
 }
 
+export interface TotpInput {
+  ok: boolean;
+  /** Normalized otpauth:// URI, empty when the input is blank. */
+  uri: string;
+  error?: string;
+}
+
+const TOTP_INPUT_ERROR =
+  "Enter the base32 secret (letters A-Z and digits 2-7) or a full otpauth:// link.";
+
+/**
+ * Accepts either a bare base32 secret or an `otpauth://` URI and returns a
+ * canonical `otpauth://` URI, so custom digits/period/algorithm survive the
+ * round trip instead of silently reverting to the defaults. Blank input is
+ * valid "no 2FA"; anything unreadable comes back with an inline message.
+ */
+export function normalizeTotpInput(raw: string): TotpInput {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { ok: true, uri: "" };
+
+  if (/^otpauth:\/\//i.test(trimmed)) {
+    const parsed = parseOtpauthUri(trimmed);
+    if (!parsed) {
+      return { ok: false, uri: "", error: "That otpauth:// link has no usable secret." };
+    }
+    return { ok: true, uri: buildOtpauthUri(parsed) };
+  }
+
+  try {
+    return { ok: true, uri: buildOtpauthUri({ secret: normalizeBase32(trimmed) }) };
+  } catch {
+    return { ok: false, uri: "", error: TOTP_INPUT_ERROR };
+  }
+}
+
 /** Drops empty fields so the payload stays as small as the input allows. */
 export function buildPayload(
   fields: DraftFields,
@@ -159,7 +204,11 @@ export function buildPayload(
       const payload: LoginPayload = {};
       if (fields.username.trim()) payload.username = fields.username.trim();
       if (fields.password) payload.password = fields.password;
-      if (fields.totp.trim()) payload.totp = fields.totp.trim();
+      // A fresh secret supersedes any legacy stored code; otherwise keep it so
+      // an unrelated edit never silently drops it.
+      const totp = normalizeTotpInput(fields.totp);
+      if (totp.ok && totp.uri) payload.totpUri = totp.uri;
+      else if (fields.totpLegacy.trim()) payload.totp = fields.totpLegacy.trim();
       const urls = splitUrls(fields.urls);
       if (urls.length > 0) payload.urls = urls;
       if (custom.length > 0) payload.custom = custom;

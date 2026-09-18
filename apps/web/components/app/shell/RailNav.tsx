@@ -4,7 +4,13 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/components/ui/cn";
-import { SettingsIcon, ShieldIcon, TrashIcon, VaultIcon } from "./Icons";
+import {
+  HealthIcon,
+  SettingsIcon,
+  ShieldIcon,
+  TrashIcon,
+  VaultIcon,
+} from "./Icons";
 
 interface NavEntry {
   href: string;
@@ -14,6 +20,11 @@ interface NavEntry {
 
 const ENTRIES: NavEntry[] = [
   { href: "/vault", label: "Vault", icon: <VaultIcon className="size-4" /> },
+  {
+    href: "/vault/health",
+    label: "Health",
+    icon: <HealthIcon className="size-4" />,
+  },
   {
     href: "/vault/security",
     label: "Security",

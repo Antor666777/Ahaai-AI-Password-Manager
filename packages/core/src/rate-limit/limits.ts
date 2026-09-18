@@ -14,6 +14,7 @@ export const RATE_LIMITS = {
   aiSearch: { points: 30, windowMs: MINUTE },
   aiProviderTest: { points: 20, windowMs: MINUTE },
   pwned: { points: 60, windowMs: MINUTE },
+  pwnedBatch: { points: 20, windowMs: MINUTE },
 } satisfies Record<string, RateLimitRule>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;

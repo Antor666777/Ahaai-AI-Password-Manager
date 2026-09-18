@@ -177,6 +177,24 @@ export const api = {
       body: json(input),
     }),
 
+  /** Import path: one request for a whole file instead of one per item. */
+  bulkCreateItem: (
+    items: {
+      id?: string;
+      type: string;
+      nameEnc: string;
+      notesEnc?: string | null;
+      dataEnc: string;
+      folderId?: string | null;
+      favorite?: boolean;
+      reprompt?: boolean;
+    }[],
+  ) =>
+    request<{ items: ApiItem[] }>("/vault/items/bulk", {
+      method: "POST",
+      body: json({ items }),
+    }),
+
   updateItem: (
     id: string,
     input: {
@@ -289,4 +307,13 @@ export const api = {
     request<{ prefix: string; suffixes: string; cached: boolean }>(
       `/pwned/range?prefix=${prefix}`,
     ),
+
+  /** Batch form for the health dashboard: one round trip for the whole vault. */
+  pwnedRanges: (prefixes: string[]) =>
+    request<{
+      ranges: { prefix: string; suffixes: string; cached: boolean }[];
+    }>("/pwned/range", {
+      method: "POST",
+      body: json({ prefixes }),
+    }),
 };

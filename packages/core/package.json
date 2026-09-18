@@ -6,6 +6,7 @@
   "exports": {
     "./rate-limit": "./src/rate-limit/index.ts",
     "./cache": "./src/cache/index.ts",
+    "./transfer": "./src/transfer/index.ts",
     "./*": "./src/*.ts"
   },
   "scripts": {

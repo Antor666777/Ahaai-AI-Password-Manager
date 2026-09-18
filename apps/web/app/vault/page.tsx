@@ -121,6 +121,8 @@ function VaultWorkspace() {
   const typeParam = searchParams.get("type");
   const typeFilter = isItemType(typeParam) ? typeParam : "";
   const favoritesOnly = searchParams.get("favorites") === "1";
+  // Set by the health dashboard so a flagged row opens straight into its item.
+  const itemParam = searchParams.get("item");
 
   // A folder id that no longer exists would desync the select, so it drops out.
   const folderFilter = useMemo(() => {
@@ -149,6 +151,17 @@ function VaultWorkspace() {
     const timer = window.setTimeout(() => setLastTrashed(null), 8000);
     return () => window.clearTimeout(timer);
   }, [lastTrashed]);
+
+  // A `?item=<id>` deep link (from the health dashboard) opens its inspector as
+  // soon as the vault has decrypted that item.
+  useEffect(() => {
+    if (!itemParam) return;
+    if (!vault.items.some((item) => item.id === itemParam)) return;
+    // Opens the item named by the URL once it has decrypted; the id comes from
+    // the query string rather than from render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedId(itemParam);
+  }, [itemParam, vault.items]);
 
   const folderNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -261,7 +274,11 @@ function VaultWorkspace() {
     try {
       await vault.trashItem(item.id);
       setLastTrashed(item);
-      if (selectedId === item.id) setSelectedId(null);
+      if (selectedId === item.id) {
+        setSelectedId(null);
+        // Drop a deep link to the item that just left the vault.
+        if (itemParam) applyParams({ item: null });
+      }
     } catch (caught) {
       toast.error(
         "Item was not moved to trash",
@@ -484,7 +501,11 @@ function VaultWorkspace() {
               onTrash={() => {
                 void handleTrash(selectedItem);
               }}
-              onBack={() => setSelectedId(null)}
+              onBack={() => {
+                setSelectedId(null);
+                // Clear a deep link so the inspector does not reopen on sync.
+                if (itemParam) applyParams({ item: null });
+              }}
             />
           </aside>
         ) : (

@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { getBearerToken } from "@ahaai/core/auth/bearer";
 import { assertSameOrigin } from "@ahaai/core/auth/csrf";
+import { getClientIp } from "@ahaai/core/auth/request-context";
 import { corsHeaders, exactOrigins } from "@ahaai/core/http/cors";
 import { AppError } from "@ahaai/core/http/errors";
 import { jsonError } from "@ahaai/core/http/responses";
 import { securityHeaders } from "@ahaai/core/http/security-headers";
+import { enforceRateLimit } from "@ahaai/core/rate-limit";
 import { registerAiRoutes } from "./routes/ai";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerHealthRoutes } from "./routes/health";
@@ -71,6 +73,16 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // frontend host, for instance) is treated as trusted; wildcards are not.
   app.use(`${API_BASE}/*`, async (c, next) => {
     if (!getBearerToken(c.req.raw)) assertSameOrigin(c.req.raw, trustedOrigins);
+    await next();
+  });
+
+  // One coarse ceiling per client IP in front of every API route, so endpoints
+  // without a stricter rule of their own (vault writes, sync, sessions, events,
+  // provider CRUD) are still throttled. Stricter per-route rules keep applying
+  // on top of this one.
+  app.use(`${API_BASE}/*`, async (c, next) => {
+    const ip = getClientIp(c.req.raw, { trustProxy: deps.config.trustProxy });
+    await enforceRateLimit("global", `ip:${ip ?? "unknown"}`);
     await next();
   });
 

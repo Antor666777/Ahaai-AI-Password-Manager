@@ -235,6 +235,14 @@ export function RefreshIcon({ className }: IconProps) {
   );
 }
 
+export function HealthIcon({ className }: IconProps) {
+  return (
+    <Glyph className={className}>
+      <path d="M2.2 10h3.1l1.8-3.5 2.4 7 1.8-3.5h5.5" {...STROKE} />
+    </Glyph>
+  );
+}
+
 export function EyeIcon({ className }: IconProps) {
   return (
     <Glyph className={className}>

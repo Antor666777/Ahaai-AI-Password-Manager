@@ -6,9 +6,10 @@ import { userSettings, users } from "@ahaai/db/schema";
 import type { Database } from "@ahaai/db/types";
 import { AppError } from "@ahaai/core/http/errors";
 import { recordSecurityEvent } from "./audit";
-import { sessionTtlMs } from "./cookies";
+import { sessionTtlMs, type SessionTtlOptions } from "./cookies";
 import {
   SERVER_AUTH_PARAMS,
+  type PepperOptions,
   dummyVerify,
   generateAuthSalt,
   hashAuthHash,
@@ -16,6 +17,13 @@ import {
 } from "./password";
 import type { RequestContext } from "./request-context";
 import { createSession, revokeAllSessions, revokeSession } from "./session";
+
+/**
+ * Security-relevant settings the API passes down from its validated config, so
+ * the service layer does not re-read the environment. Every field is optional
+ * and falls back to the environment for direct callers (tests, scripts).
+ */
+export type AuthServiceOptions = SessionTtlOptions & PepperOptions;
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -43,6 +51,7 @@ export async function registerUser(
   db: Database,
   input: RegisterInput,
   ctx: Partial<RequestContext> = {},
+  options: AuthServiceOptions = {},
 ): Promise<AuthSuccess> {
   const emailNormalized = normalizeEmail(input.email);
 
@@ -57,7 +66,7 @@ export async function registerUser(
   }
 
   const authSalt = generateAuthSalt();
-  const storedHash = await hashAuthHash(input.authHash, authSalt);
+  const storedHash = await hashAuthHash(input.authHash, authSalt, SERVER_AUTH_PARAMS, options);
 
   let user: User;
   try {
@@ -91,7 +100,7 @@ export async function registerUser(
     throw error;
   }
 
-  const { token, session } = await createSession(db, user.id, ctx);
+  const { token, session } = await createSession(db, user.id, ctx, options);
   await recordSecurityEvent(db, {
     userId: user.id,
     type: "auth.register",
@@ -103,7 +112,7 @@ export async function registerUser(
     user,
     token,
     expiresAt: session.expiresAt,
-    ttlMs: sessionTtlMs(),
+    ttlMs: sessionTtlMs(options),
   };
 }
 
@@ -120,6 +129,7 @@ export async function loginUser(
   db: Database,
   input: LoginInput,
   ctx: Partial<RequestContext> = {},
+  options: AuthServiceOptions = {},
 ): Promise<LoginResult> {
   const emailNormalized = normalizeEmail(input.email);
 
@@ -130,7 +140,7 @@ export async function loginUser(
     .limit(1);
 
   if (!user) {
-    await dummyVerify(input.authHash);
+    await dummyVerify(input.authHash, options);
     await recordSecurityEvent(db, {
       type: "auth.login.failed",
       severity: "warning",
@@ -158,6 +168,7 @@ export async function loginUser(
     user.authSalt,
     user.authHash,
     user.authParams,
+    options,
   );
 
   if (!valid) {
@@ -172,7 +183,7 @@ export async function loginUser(
     return { status: "invalid" };
   }
 
-  const { token, session } = await createSession(db, user.id, ctx);
+  const { token, session } = await createSession(db, user.id, ctx, options);
 
   await db
     .update(users)
@@ -191,7 +202,7 @@ export async function loginUser(
     user,
     token,
     expiresAt: session.expiresAt,
-    ttlMs: sessionTtlMs(),
+    ttlMs: sessionTtlMs(options),
   };
 }
 
@@ -228,6 +239,7 @@ export async function changeMasterPassword(
   db: Database,
   input: ChangePasswordInput,
   ctx: Partial<RequestContext> = {},
+  options: AuthServiceOptions = {},
 ): Promise<ChangePasswordResult> {
   const [user] = await db
     .select()
@@ -242,6 +254,7 @@ export async function changeMasterPassword(
     user.authSalt,
     user.authHash,
     user.authParams,
+    options,
   );
 
   if (!valid) {
@@ -257,7 +270,7 @@ export async function changeMasterPassword(
   }
 
   const authSalt = generateAuthSalt();
-  const storedHash = await hashAuthHash(input.authHash, authSalt);
+  const storedHash = await hashAuthHash(input.authHash, authSalt, SERVER_AUTH_PARAMS, options);
   const securityStamp = newSecurityStamp();
 
   // The re-sealed key and the sign out of every other session have to land

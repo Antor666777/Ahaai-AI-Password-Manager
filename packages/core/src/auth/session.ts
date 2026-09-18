@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, lt, ne } from "drizzle-orm";
 import { bytesToBase64Url, bytesToHex, randomBytes, utf8ToBytes } from "@ahaai/core/crypto/encoding";
 import { sessions, users, type Session, type User } from "@ahaai/db/schema";
 import type { Database } from "@ahaai/db/types";
-import { sessionTtlMs } from "./cookies";
+import { sessionTtlMs, type SessionTtlOptions } from "./cookies";
 import type { RequestContext } from "./request-context";
 
 export const SESSION_TOKEN_BYTES = 32;
@@ -46,9 +46,10 @@ export async function createSession(
   db: Database,
   userId: string,
   ctx: Partial<RequestContext> = {},
+  options: SessionTtlOptions = {},
 ): Promise<CreatedSession> {
   const token = generateSessionToken();
-  const expiresAt = new Date(Date.now() + sessionTtlMs());
+  const expiresAt = new Date(Date.now() + sessionTtlMs(options));
 
   void maybeCleanupExpiredSessions(db);
 
@@ -136,6 +137,7 @@ export async function rotateSession(
   db: Database,
   session: Session,
   ctx: Partial<RequestContext> = {},
+  options: SessionTtlOptions = {},
 ): Promise<CreatedSession> {
   const token = generateSessionToken();
   const [updated] = await db
@@ -145,7 +147,7 @@ export async function rotateSession(
       previousTokenHash: session.tokenHash,
       rotatedAt: new Date(),
       lastUsedAt: new Date(),
-      expiresAt: new Date(Date.now() + sessionTtlMs()),
+      expiresAt: new Date(Date.now() + sessionTtlMs(options)),
       ipAddress: ctx.ip ?? session.ipAddress,
       userAgent: ctx.userAgent ?? session.userAgent,
     })

@@ -1,7 +1,13 @@
 "use client";
 
+import {
+  generateTotp,
+  parseOtpauthUri,
+  totpSecondsRemaining,
+} from "@ahaai/core/crypto/totp";
 import { Badge } from "@/components/ui/feedback";
 import { Button, IconButton } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/data";
 import type {
   CardPayload,
   DecryptedItem,
@@ -10,7 +16,8 @@ import type {
   SecureNotePayload,
 } from "@/lib/client/types";
 import { BackIcon, TrashIcon } from "@/components/app/shell/Icons";
-import { ValueRow, SecretRow } from "./SecretField";
+import { useNow } from "@/components/app/security/format";
+import { FieldRow, ValueRow, SecretRow } from "./SecretField";
 import { TypeGlyph } from "./TypeGlyph";
 import { formatDateTime, typeLabel } from "./meta";
 
@@ -22,7 +29,8 @@ type RowSpec =
       mono?: boolean;
       multiline?: boolean;
     }
-  | { kind: "secret"; label: string; value: string };
+  | { kind: "secret"; label: string; value: string }
+  | { kind: "totp"; label: string; uri: string };
 
 function rowsFor(item: DecryptedItem): RowSpec[] {
   const rows: RowSpec[] = [];
@@ -35,8 +43,13 @@ function rowsFor(item: DecryptedItem): RowSpec[] {
     if (data.password) {
       rows.push({ kind: "secret", label: "Password", value: data.password });
     }
+    if (data.totpUri) {
+      rows.push({ kind: "totp", label: "Two-factor code", uri: data.totpUri });
+    }
+    // Pre-TOTP items stored a single rotating code; keep it readable but make
+    // it obvious it is a frozen value, not a live code.
     if (data.totp) {
-      rows.push({ kind: "secret", label: "One-time code", value: data.totp });
+      rows.push({ kind: "secret", label: "Stored one-time code", value: data.totp });
     }
     for (const url of data.urls ?? []) {
       rows.push({ kind: "value", label: "Website", value: url });
@@ -112,6 +125,70 @@ const DETAIL_HEADING: Record<DecryptedItem["type"], string> = {
   secure_note: "Secure note",
 };
 
+/**
+ * Renders the live code for a stored secret. The one-second tick keeps both the
+ * code and the countdown honest through the period boundary; a stored secret is
+ * only ever read, never written back. The URI carries any custom
+ * digits/period/algorithm, so a non-default account still produces valid codes.
+ */
+function LiveTotpRow({ label, uri }: { label: string; uri: string }) {
+  const now = useNow(1_000);
+  const at = Math.floor(now / 1000);
+
+  const params = parseOtpauthUri(uri);
+  let code: string | null = null;
+  if (params) {
+    try {
+      code = generateTotp(params.secret, {
+        digits: params.digits,
+        period: params.period,
+        algorithm: params.algorithm,
+        at,
+      });
+    } catch {
+      code = null;
+    }
+  }
+
+  if (!params || code === null) {
+    return (
+      <FieldRow label={label}>
+        <p className="text-[13px] text-ink-faint">
+          This two-factor secret could not be read. Edit the item and enter it again.
+        </p>
+      </FieldRow>
+    );
+  }
+
+  const remaining = totpSecondsRemaining(params.period, at);
+  const percent = Math.round((remaining / params.period) * 100);
+
+  return (
+    <FieldRow label={label}>
+      <div className="flex items-center gap-3">
+        <span className="mono-data text-[15px] tracking-[0.2em] text-ink">{code}</span>
+        <CopyButton
+          value={code}
+          label="Copy two-factor code"
+          className="min-h-11 min-w-11"
+        />
+        <div className="ms-auto flex items-center gap-2">
+          <span
+            className="h-1 w-16 overflow-hidden rounded-full bg-surface-3"
+            aria-hidden="true"
+          >
+            <span
+              className="block h-full rounded-full bg-accent transition-[width] duration-1000 ease-linear"
+              style={{ width: `${percent}%` }}
+            />
+          </span>
+          <span className="text-[12.5px] tabular-nums text-ink-faint">{remaining}s</span>
+        </div>
+      </div>
+    </FieldRow>
+  );
+}
+
 export interface ItemInspectorProps {
   item: DecryptedItem;
   folderName: string | null;
@@ -179,7 +256,13 @@ export function ItemInspector({
         ) : (
           <div className="mt-2">
             {rows.map((row, index) =>
-              row.kind === "secret" ? (
+              row.kind === "totp" ? (
+                <LiveTotpRow
+                  key={`${row.label}-${index}`}
+                  label={row.label}
+                  uri={row.uri}
+                />
+              ) : row.kind === "secret" ? (
                 <SecretRow
                   key={`${row.label}-${index}`}
                   label={row.label}

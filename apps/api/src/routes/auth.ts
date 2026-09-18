@@ -33,7 +33,7 @@ import { DEFAULT_KDF_PARAMS, KDF_VERSION } from "@ahaai/core/crypto/kdf";
 import { AppError } from "@ahaai/core/http/errors";
 import { jsonCreated, jsonOk } from "@ahaai/core/http/responses";
 import { parseIdParam, parseJson, parseQuery } from "@ahaai/core/http/validate";
-import { enforceRateLimit, enforceRateLimits } from "@ahaai/core/rate-limit";
+import { enforceRateLimit } from "@ahaai/core/rate-limit";
 import { getSettings } from "@ahaai/core/settings";
 import { securityEvents, sessions, users } from "@ahaai/db/schema";
 import type { AppEnv } from "../types";
@@ -54,24 +54,25 @@ const eventsQuerySchema = z.object({
  * Deterministic decoy so prelogin answers unknown emails indistinguishably
  * from known ones, closing the account-enumeration channel.
  */
-function decoySalt(email: string): string {
-  const pepper = process.env.AUTH_PEPPER ?? "ahaai-prelogin-decoy";
+function decoySalt(email: string, pepper: string): string {
   const digest = hmac(sha256, utf8ToBytes(pepper), utf8ToBytes(`prelogin:${email}`));
   return bytesToBase64(digest.slice(0, 16));
 }
 
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
   app.post("/auth/register", async (c) => {
-    const { db } = c.get("deps");
-    const context = getRequestContext(c.req.raw);
+    const { db, config } = c.get("deps");
+    const context = getRequestContext(c.req.raw, {
+      trustProxy: config.trustProxy,
+    });
     const ip = context.ip ?? "unknown";
-    await enforceRateLimits([
-      { name: "global", identifier: `ip:${ip}` },
-      { name: "register", identifier: `ip:${ip}` },
-    ]);
+    await enforceRateLimit("register", `ip:${ip}`);
 
     const body = await parseJson(c.req.raw, registerSchema);
-    const result = await registerUser(db, body, context);
+    const result = await registerUser(db, body, context, {
+      pepper: config.authPepper,
+      sessionTtlDays: config.sessionTtlDays,
+    });
 
     return jsonCreated(
       {
@@ -82,23 +83,31 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         },
         expiresAt: result.expiresAt.toISOString(),
       },
-      { headers: { "set-cookie": buildSessionCookie(result.token, result.ttlMs) } },
+      {
+        headers: {
+          "set-cookie": buildSessionCookie(result.token, result.ttlMs, {
+            cookieSecure: config.cookieSecure ?? config.isProduction,
+          }),
+        },
+      },
     );
   });
 
   app.post("/auth/login", async (c) => {
-    const { db } = c.get("deps");
-    const context = getRequestContext(c.req.raw);
+    const { db, config } = c.get("deps");
+    const context = getRequestContext(c.req.raw, {
+      trustProxy: config.trustProxy,
+    });
     const ip = context.ip ?? "unknown";
-    await enforceRateLimits([
-      { name: "global", identifier: `ip:${ip}` },
-      { name: "login", identifier: `ip:${ip}` },
-    ]);
+    await enforceRateLimit("login", `ip:${ip}`);
 
     const body = await parseJson(c.req.raw, loginSchema);
     await enforceRateLimit("loginPerEmail", `email:${normalizeEmail(body.email)}`);
 
-    const result = await loginUser(db, body, context);
+    const result = await loginUser(db, body, context, {
+      pepper: config.authPepper,
+      sessionTtlDays: config.sessionTtlDays,
+    });
 
     if (result.status !== "ok") {
       throw AppError.unauthorized("Invalid email or master password");
@@ -113,23 +122,31 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         },
         expiresAt: result.expiresAt.toISOString(),
       },
-      { headers: { "set-cookie": buildSessionCookie(result.token, result.ttlMs) } },
+      {
+        headers: {
+          "set-cookie": buildSessionCookie(result.token, result.ttlMs, {
+            cookieSecure: config.cookieSecure ?? config.isProduction,
+          }),
+        },
+      },
     );
   });
 
   app.post("/auth/token", async (c) => {
-    const { db } = c.get("deps");
-    const context = getRequestContext(c.req.raw);
+    const { db, config } = c.get("deps");
+    const context = getRequestContext(c.req.raw, {
+      trustProxy: config.trustProxy,
+    });
     const ip = context.ip ?? "unknown";
-    await enforceRateLimits([
-      { name: "global", identifier: `ip:${ip}` },
-      { name: "login", identifier: `ip:${ip}` },
-    ]);
+    await enforceRateLimit("login", `ip:${ip}`);
 
     const body = await parseJson(c.req.raw, loginSchema);
     await enforceRateLimit("loginPerEmail", `email:${normalizeEmail(body.email)}`);
 
-    const result = await loginUser(db, body, context);
+    const result = await loginUser(db, body, context, {
+      pepper: config.authPepper,
+      sessionTtlDays: config.sessionTtlDays,
+    });
 
     if (result.status !== "ok") {
       throw AppError.unauthorized("Invalid email or master password");
@@ -151,24 +168,32 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
   });
 
   app.post("/auth/logout", async (c) => {
-    const { db } = c.get("deps");
+    const { db, config } = c.get("deps");
     const { user, session } = await requireAuth(db, c.req.raw);
 
-    await logoutUser(db, session.id, user.id, getRequestContext(c.req.raw));
+    await logoutUser(
+      db,
+      session.id,
+      user.id,
+      getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+    );
 
     return jsonOk(
       { ok: true },
-      { headers: { "set-cookie": buildClearSessionCookie() } },
+      {
+        headers: {
+          "set-cookie": buildClearSessionCookie({
+            cookieSecure: config.cookieSecure ?? config.isProduction,
+          }),
+        },
+      },
     );
   });
 
   app.get("/auth/prelogin", async (c) => {
-    const { db } = c.get("deps");
-    const ip = getClientIp(c.req.raw) ?? "unknown";
-    await enforceRateLimits([
-      { name: "global", identifier: `ip:${ip}` },
-      { name: "login", identifier: `ip:${ip}` },
-    ]);
+    const { db, config } = c.get("deps");
+    const ip = getClientIp(c.req.raw, { trustProxy: config.trustProxy }) ?? "unknown";
+    await enforceRateLimit("login", `ip:${ip}`);
 
     const { email } = parseQuery(c.req.raw, preloginQuerySchema);
     const emailNormalized = normalizeEmail(email);
@@ -182,7 +207,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     const kdfParams = user?.kdfParams ?? {
       ...DEFAULT_KDF_PARAMS,
       version: KDF_VERSION,
-      salt: decoySalt(emailNormalized),
+      salt: decoySalt(emailNormalized, config.authPepper),
     };
 
     return jsonOk({ kdfParams });
@@ -205,7 +230,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
   });
 
   app.post("/auth/password", async (c) => {
-    const { db } = c.get("deps");
+    const { db, config } = c.get("deps");
     const { user, session } = await requireAuth(db, c.req.raw);
     await enforceRateLimit("passwordChange", `user:${user.id}`);
     const body = await parseJson(c.req.raw, changePasswordSchema);
@@ -220,7 +245,8 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         kdfParams: body.kdfParams,
         protectedVaultKey: body.protectedVaultKey,
       },
-      getRequestContext(c.req.raw),
+      getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
+      { pepper: config.authPepper },
     );
 
     return jsonOk({
@@ -241,7 +267,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
   });
 
   app.delete("/auth/sessions/:id", async (c) => {
-    const { db } = c.get("deps");
+    const { db, config } = c.get("deps");
     const { user, session } = await requireAuth(db, c.req.raw);
     const id = parseIdParam(c.req.param("id"));
 
@@ -262,7 +288,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       userId: user.id,
       type: "session.revoked",
       severity: "warning",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, { trustProxy: config.trustProxy }),
       metadata: { sessionId: target.id },
     });
 

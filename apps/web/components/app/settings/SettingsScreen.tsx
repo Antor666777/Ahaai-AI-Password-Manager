@@ -13,6 +13,7 @@ import type {
 } from "@/lib/client/types";
 import { AccountSection } from "./AccountSection";
 import { AiModeSection } from "./AiModeSection";
+import { ImportExportSection } from "./ImportExportSection";
 import { ProvidersSection } from "./ProvidersSection";
 import { describeApiFailure, failureCopy } from "./apiFailure";
 
@@ -163,6 +164,10 @@ export function SettingsScreen() {
         <Divider />
 
         <AccountSection />
+
+        <Divider />
+
+        <ImportExportSection />
       </div>
 
       <footer className="mt-9 border-t border-line pt-4">

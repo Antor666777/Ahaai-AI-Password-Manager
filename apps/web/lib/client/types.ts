@@ -124,6 +124,13 @@ export interface CustomField {
 export interface LoginPayload {
   username?: string;
   password?: string;
+  /**
+   * A normalized `otpauth://` descriptor for the shared secret. Keeping the URI
+   * instead of a bare base32 string preserves custom digits/period/algorithm,
+   * which would otherwise generate the wrong code. Live codes stay local.
+   */
+  totpUri?: string;
+  /** Legacy: a rotating code stored before real TOTP existed. Read-only. */
   totp?: string;
   urls?: string[];
   custom?: CustomField[];

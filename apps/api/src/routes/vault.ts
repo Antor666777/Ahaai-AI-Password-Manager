@@ -5,11 +5,12 @@ import { getRequestContext } from "@ahaai/core/auth/request-context";
 import { jsonCreated, jsonOk } from "@ahaai/core/http/responses";
 import { parseIdParam, parseJson, parseQuery } from "@ahaai/core/http/validate";
 import { enforceRateLimit } from "@ahaai/core/rate-limit";
-import { createItemSchema, folderCreateSchema, folderUpdateSchema, listItemsQuerySchema, syncQuerySchema, updateItemSchema } from "@ahaai/core/vault/schemas";
+import { bulkCreateSchema, createItemSchema, folderCreateSchema, folderUpdateSchema, listItemsQuerySchema, syncQuerySchema, updateItemSchema } from "@ahaai/core/vault/schemas";
 import { toPublicFolder, toPublicItem } from "@ahaai/core/vault/serializers";
 import {
   createFolder,
   createItem,
+  createItems,
   deleteFolder,
   getItem,
   listFolders,
@@ -56,11 +57,33 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "vault.item.created",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { itemId: item.id, itemType: item.type },
     });
 
     return jsonCreated({ item: toPublicItem(item) });
+  });
+
+  app.post("/vault/items/bulk", async (c) => {
+    const { db } = c.get("deps");
+    const { user } = await requireAuth(db, c.req.raw);
+    await enforceRateLimit("vault", `user:${user.id}`);
+    const body = await parseJson(c.req.raw, bulkCreateSchema);
+
+    const created = await createItems(db, user.id, body.items);
+
+    await recordSecurityEvent(db, {
+      userId: user.id,
+      type: "vault.items.bulk_created",
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
+      metadata: { count: created.length },
+    });
+
+    return jsonCreated({ items: created.map(toPublicItem) });
   });
 
   app.get("/vault/items/:id", async (c) => {
@@ -83,7 +106,9 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "vault.item.updated",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { itemId: item.id, revision: item.revision },
     });
 
@@ -100,7 +125,9 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "vault.item.deleted",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { itemId: item.id },
     });
 
@@ -117,7 +144,9 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
     await recordSecurityEvent(db, {
       userId: user.id,
       type: "vault.item.restored",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { itemId: item.id },
     });
 
@@ -135,7 +164,9 @@ export function registerVaultRoutes(app: Hono<AppEnv>): void {
       userId: user.id,
       type: "vault.item.purged",
       severity: "warning",
-      ...getRequestContext(c.req.raw),
+      ...getRequestContext(c.req.raw, {
+        trustProxy: c.get("deps").config.trustProxy,
+      }),
       metadata: { itemId: id },
     });
 

@@ -150,6 +150,50 @@ export async function createItem(
   return item;
 }
 
+/**
+ * Bulk import. Every row lands in ONE transaction, so a bad folder reference or
+ * a constraint failure rolls the whole batch back rather than leaving a partial
+ * import behind. Folder ownership is checked once per distinct folder using the
+ * same rule as `createItem`.
+ */
+export async function createItems(
+  db: Database,
+  userId: string,
+  inputs: CreateItemInput[],
+): Promise<Item[]> {
+  if (inputs.length === 0) return [];
+
+  return db.transaction(async (tx) => {
+    const folderIds = [
+      ...new Set(
+        inputs
+          .map((input) => input.folderId)
+          .filter((folderId): folderId is string => Boolean(folderId)),
+      ),
+    ];
+    for (const folderId of folderIds) {
+      await assertFolderOwnership(tx as unknown as Database, userId, folderId);
+    }
+
+    const values = inputs.map((input) => {
+      const row: typeof items.$inferInsert = {
+        userId,
+        type: input.type,
+        nameEnc: input.nameEnc,
+        notesEnc: input.notesEnc ?? null,
+        dataEnc: input.dataEnc,
+        folderId: input.folderId ?? null,
+        favorite: input.favorite ?? false,
+        reprompt: input.reprompt ?? false,
+      };
+      if (input.id) row.id = input.id;
+      return row;
+    });
+
+    return tx.insert(items).values(values).returning();
+  });
+}
+
 export interface UpdateItemInput {
   revision: number;
   nameEnc?: string;

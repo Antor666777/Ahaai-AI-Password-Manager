@@ -11,6 +11,7 @@ export type SecurityEventType =
   | "session.revoked"
   | "session.reuse_detected"
   | "vault.item.created"
+  | "vault.items.bulk_created"
   | "vault.item.updated"
   | "vault.item.deleted"
   | "vault.item.restored"

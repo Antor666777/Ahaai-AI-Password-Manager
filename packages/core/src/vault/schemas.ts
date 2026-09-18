@@ -25,6 +25,26 @@ export const createItemSchema = z.object({
   reprompt: z.boolean().optional(),
 });
 
+/**
+ * Bulk import: one to five hundred items, each identical to a single create
+ * (client-supplied id included, so per-item AAD still binds). The ids within a
+ * request must be unique; two rows sharing one would otherwise reach the
+ * primary key and fail the whole batch with a 500 instead of a 400.
+ */
+export const bulkCreateSchema = z
+  .object({
+    items: z.array(createItemSchema).min(1).max(500),
+  })
+  .refine(
+    (value) => {
+      const ids = value.items
+        .map((item) => item.id)
+        .filter((id): id is string => Boolean(id));
+      return new Set(ids).size === ids.length;
+    },
+    { message: "Item ids must be unique within a request", path: ["items"] },
+  );
+
 export const updateItemSchema = z
   .object({
     revision: z.number().int().min(1),

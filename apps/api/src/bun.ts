@@ -1,6 +1,7 @@
 import { getDb } from "@ahaai/db/client";
 import { bootstrapDevDatabase } from "@ahaai/db/dev-client";
 import { runMigrations } from "@ahaai/db/migrate";
+import { reportRateLimiterBackend } from "@ahaai/core/rate-limit";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { createDeps } from "./deps";
@@ -14,6 +15,7 @@ if (config.databaseUrl) {
 await bootstrapDevDatabase();
 
 const deps = createDeps({ config, db: getDb() });
+await reportRateLimiterBackend(deps.logger);
 const app = createApp(deps);
 const servingStatic = await registerStaticFiles(app, config);
 

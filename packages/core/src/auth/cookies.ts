@@ -2,8 +2,14 @@ export const SESSION_COOKIE = "ahaai_session";
 const DEFAULT_TTL_DAYS = 30;
 const MS_PER_DAY = 86_400_000;
 
-export function sessionTtlMs(): number {
-  const days = Number(process.env.SESSION_TTL_DAYS ?? DEFAULT_TTL_DAYS);
+export interface SessionTtlOptions {
+  /** Overrides SESSION_TTL_DAYS from the environment. */
+  sessionTtlDays?: number;
+}
+
+export function sessionTtlMs(options: SessionTtlOptions = {}): number {
+  const days =
+    options.sessionTtlDays ?? Number(process.env.SESSION_TTL_DAYS ?? DEFAULT_TTL_DAYS);
   const safeDays = Number.isFinite(days) && days > 0 ? days : DEFAULT_TTL_DAYS;
   return safeDays * MS_PER_DAY;
 }
@@ -16,22 +22,32 @@ export interface CookieOptions {
   maxAgeSeconds: number;
 }
 
+export interface CookieSecureOptions {
+  /** Overrides COOKIE_SECURE / NODE_ENV from the environment. */
+  cookieSecure?: boolean;
+}
+
 /**
  * `NODE_ENV` describes the build, not the scheme the browser is actually on.
  * A production build served over plain HTTP would set `Secure` and have the
- * browser drop the cookie on the floor, so COOKIE_SECURE overrides it.
+ * browser drop the cookie on the floor, so COOKIE_SECURE overrides it. Callers
+ * pass the validated config value, so the request path has one source of truth.
  */
-function cookieSecure(): boolean {
+function cookieSecure(options: CookieSecureOptions): boolean {
+  if (options.cookieSecure !== undefined) return options.cookieSecure;
   const override = process.env.COOKIE_SECURE;
   if (override === "true") return true;
   if (override === "false") return false;
   return process.env.NODE_ENV === "production";
 }
 
-export function sessionCookieOptions(maxAgeMs: number): CookieOptions {
+export function sessionCookieOptions(
+  maxAgeMs: number,
+  options: CookieSecureOptions = {},
+): CookieOptions {
   return {
     httpOnly: true,
-    secure: cookieSecure(),
+    secure: cookieSecure(options),
     sameSite: "lax",
     path: "/",
     maxAgeSeconds: Math.max(0, Math.floor(maxAgeMs / 1000)),
@@ -54,13 +70,21 @@ export function serializeCookie(
   return parts.join("; ");
 }
 
-export function buildSessionCookie(token: string, maxAgeMs: number): string {
-  return serializeCookie(SESSION_COOKIE, token, sessionCookieOptions(maxAgeMs));
+export function buildSessionCookie(
+  token: string,
+  maxAgeMs: number,
+  options: CookieSecureOptions = {},
+): string {
+  return serializeCookie(
+    SESSION_COOKIE,
+    token,
+    sessionCookieOptions(maxAgeMs, options),
+  );
 }
 
-export function buildClearSessionCookie(): string {
+export function buildClearSessionCookie(options: CookieSecureOptions = {}): string {
   return serializeCookie(SESSION_COOKIE, "", {
-    ...sessionCookieOptions(0),
+    ...sessionCookieOptions(0, options),
     maxAgeSeconds: 0,
   });
 }
