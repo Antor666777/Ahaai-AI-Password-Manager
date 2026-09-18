@@ -1,0 +1,53 @@
+# Ahaai, self-hosted. Two services and one command:
+#
+#   cd docker && cp .env.example .env    # then set the two secrets
+#   docker compose up -d
+#
+# Then open http://localhost:3001
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ahaai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-ahaai}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ahaai} -d ${POSTGRES_DB:-ahaai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-ahaai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env}@db:5432/${POSTGRES_DB:-ahaai}
+      AUTH_PEPPER: ${AUTH_PEPPER:?set AUTH_PEPPER in docker/.env}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?set ENCRYPTION_MASTER_KEY in docker/.env}
+      # Extensions and third-party frontends. An exact origin is also trusted for
+      # cookie auth; wildcards must use a bearer token.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # Defaults to false because a fresh self-host is usually plain HTTP first.
+      # Set it to true once you terminate TLS, or the session cookie is dropped.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Nothing sits in front of this service in the default setup, so forwarded
+      # headers must not be believed or callers can forge their own IP.
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      # Optional. Without it, rate limiting falls back to per-instance memory.
+      REDIS_URL: ${REDIS_URL:-}
+    ports:
+      - "${AHAALI_PORT:-3001}:3001"
+
+volumes:
+  pgdata:

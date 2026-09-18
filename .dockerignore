@@ -1,0 +1,15 @@
+# Build context hygiene. Keeping these out makes the image build fast and stops
+# a local database or a stale build from leaking in.
+**/node_modules
+**/.next
+**/out
+**/dist
+**/.data
+**/coverage
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.commandcode
+docker/docker-compose.yml

@@ -1,0 +1,30 @@
+{
+  "name": "@ahaai/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./rate-limit": "./src/rate-limit/index.ts",
+    "./cache": "./src/cache/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ahaai/db": "*",
+    "@ai-sdk/anthropic": "^4.0.53",
+    "@ai-sdk/azure": "^4.0.70",
+    "@ai-sdk/google": "^4.0.69",
+    "@ai-sdk/groq": "^4.0.41",
+    "@ai-sdk/mistral": "^4.0.43",
+    "@ai-sdk/openai": "^4.0.66",
+    "@ai-sdk/openai-compatible": "^3.0.48",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "ai": "^7.0.99",
+    "drizzle-orm": "^0.45.2",
+    "ioredis": "^6.0.0",
+    "zod": "^4.6.4"
+  }
+}

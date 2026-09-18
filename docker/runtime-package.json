@@ -1,0 +1,10 @@
+{
+  "name": "ahaai-api-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runtime dependencies for the API image. Everything else is inlined into the Bun bundle.",
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "ioredis": "^6.0.0"
+  }
+}
