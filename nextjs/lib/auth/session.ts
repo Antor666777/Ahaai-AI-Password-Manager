@@ -8,6 +8,25 @@ import type { RequestContext } from "./request-context";
 
 export const SESSION_TOKEN_BYTES = 32;
 const TOUCH_INTERVAL_MS = 60_000;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+let lastCleanupAt = 0;
+
+/**
+ * Removes expired rows. There is no scheduler in the app, so this rides along
+ * with session creation, throttled to once an hour per instance. Without it
+ * expired sessions accumulate forever.
+ */
+async function maybeCleanupExpiredSessions(db: Database): Promise<void> {
+  const now = Date.now();
+  if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
+  lastCleanupAt = now;
+  try {
+    await deleteExpiredSessions(db);
+  } catch {
+    // Housekeeping must never fail a sign in.
+  }
+}
 
 export function generateSessionToken(): string {
   return bytesToBase64Url(randomBytes(SESSION_TOKEN_BYTES));
@@ -30,6 +49,8 @@ export async function createSession(
 ): Promise<CreatedSession> {
   const token = generateSessionToken();
   const expiresAt = new Date(Date.now() + sessionTtlMs());
+
+  void maybeCleanupExpiredSessions(db);
 
   const [session] = await db
     .insert(sessions)

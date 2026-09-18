@@ -87,6 +87,32 @@ describe("auth service", () => {
     ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
   });
 
+  it("answers a concurrent duplicate sign up with a conflict, never a raw failure", async () => {
+    const kdfParams = cheapKdfParams();
+    const authHash = await deriveAuthHash(TEST_PASSWORD, kdfParams);
+    const material = await buildRegistrationMaterial(
+      TEST_PASSWORD,
+      kdfParams,
+      "racer@example.com",
+    );
+
+    const attempt = () =>
+      registerUser(ctx.db, {
+        email: "racer@example.com",
+        authHash,
+        kdfParams,
+        protectedVaultKey: material.protectedVaultKey,
+      });
+
+    const results = await Promise.allSettled([attempt(), attempt()]);
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toMatchObject({ code: "CONFLICT", status: 409 });
+  });
+
   it("logs in with correct credentials and returns vault material", async () => {
     const user = await createTestUser(ctx.db, { email: "login@example.com" });
 

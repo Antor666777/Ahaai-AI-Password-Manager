@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth/guard";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { getDb } from "@/lib/db/client";
 import { jsonError, jsonOk } from "@/lib/http/responses";
+import { parseIdParam } from "@/lib/http/validate";
 import { purgeItem } from "@/lib/vault/service";
 
 export async function DELETE(
@@ -14,7 +15,7 @@ export async function DELETE(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     await purgeItem(db, user.id, id);
 

@@ -170,6 +170,67 @@ describe("vault service", () => {
     expect(secondPage.nextCursor).toBeNull();
   });
 
+  it("pages past rows that share a timestamp without skipping any", async () => {
+    const user = await createTestUser(ctx.db, { email: "v9@example.com" });
+    const created = [];
+    for (let i = 0; i < 5; i += 1) {
+      created.push(
+        await createItem(ctx.db, user.id, {
+          type: "login",
+          nameEnc: envelope(`same-${i}`),
+          dataEnc: envelope(),
+        }),
+      );
+    }
+
+    // Every row lands on the same createdAt, so only the id tiebreak separates
+    // them. A cursor that keys on createdAt alone loses rows here.
+    const sameMoment = new Date();
+    for (const item of created) {
+      await ctx.db
+        .update(items)
+        .set({ createdAt: sameMoment })
+        .where(eq(items.id, item.id));
+    }
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await listItems(ctx.db, user.id, { limit: 2, cursor });
+      seen.push(...page.items.map((entry) => entry.id));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+
+    expect(seen).toHaveLength(created.length);
+    expect(new Set(seen).size).toBe(created.length);
+    expect([...seen].sort()).toEqual(created.map((entry) => entry.id).sort());
+  });
+
+  it("keeps the revision monotonic across trash and restore", async () => {
+    const user = await createTestUser(ctx.db, { email: "v10@example.com" });
+    const item = await createItem(ctx.db, user.id, {
+      type: "login",
+      nameEnc: envelope(),
+      dataEnc: envelope(),
+    });
+
+    const trashed = await trashItem(ctx.db, user.id, item.id);
+    expect(trashed.revision).toBeGreaterThan(item.revision);
+
+    const restored = await restoreItem(ctx.db, user.id, item.id);
+    expect(restored.revision).toBeGreaterThan(trashed.revision);
+
+    // A writer holding the pre-trash revision must be turned away, not allowed
+    // to overwrite the newer row.
+    await expect(
+      updateItem(ctx.db, user.id, item.id, {
+        revision: item.revision,
+        favorite: true,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
   it("moves items to trash, restores and purges them", async () => {
     const user = await createTestUser(ctx.db, { email: "v5@example.com" });
     const item = await createItem(ctx.db, user.id, {

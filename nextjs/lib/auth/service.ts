@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { bytesToHex, randomBytes } from "@/lib/crypto/encoding";
+import { isUniqueViolation } from "@/lib/db/errors";
 import type { KdfParams, User } from "@/lib/db/schema";
 import { userSettings, users } from "@/lib/db/schema";
 import type { Database } from "@/lib/db/types";
@@ -58,22 +59,37 @@ export async function registerUser(
   const authSalt = generateAuthSalt();
   const storedHash = await hashAuthHash(input.authHash, authSalt);
 
-  const [user] = await db
-    .insert(users)
-    .values({
-      email: input.email,
-      emailNormalized,
-      authHash: storedHash,
-      authSalt,
-      authParams: SERVER_AUTH_PARAMS,
-      kdfParams: input.kdfParams,
-      kdfVersion: input.kdfParams.version,
-      protectedVaultKey: input.protectedVaultKey,
-      securityStamp: newSecurityStamp(),
-    })
-    .returning();
+  let user: User;
+  try {
+    // User and settings land together: a half-created account would otherwise
+    // be left without settings when a write fails midway.
+    user = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(users)
+        .values({
+          email: input.email,
+          emailNormalized,
+          authHash: storedHash,
+          authSalt,
+          authParams: SERVER_AUTH_PARAMS,
+          kdfParams: input.kdfParams,
+          kdfVersion: input.kdfParams.version,
+          protectedVaultKey: input.protectedVaultKey,
+          securityStamp: newSecurityStamp(),
+        })
+        .returning();
 
-  await db.insert(userSettings).values({ userId: user.id });
+      await tx.insert(userSettings).values({ userId: created.id });
+      return created;
+    });
+  } catch (error) {
+    // The pre-check above races with concurrent sign ups; the unique index is
+    // the real guard, so map its violation to the same conflict.
+    if (isUniqueViolation(error)) {
+      throw AppError.conflict("An account with this email already exists");
+    }
+    throw error;
+  }
 
   const { token, session } = await createSession(db, user.id, ctx);
   await recordSecurityEvent(db, {
@@ -244,21 +260,26 @@ export async function changeMasterPassword(
   const storedHash = await hashAuthHash(input.authHash, authSalt);
   const securityStamp = newSecurityStamp();
 
-  await db
-    .update(users)
-    .set({
-      authHash: storedHash,
-      authSalt,
-      authParams: SERVER_AUTH_PARAMS,
-      kdfParams: input.kdfParams,
-      kdfVersion: input.kdfParams.version,
-      protectedVaultKey: input.protectedVaultKey,
-      securityStamp,
-      updatedAt: new Date(),
-    })
-    .where(eq(users.id, user.id));
+  // The re-sealed key and the sign out of every other session have to land
+  // together: rotating the key while old sessions survive would leave sessions
+  // that can no longer open the vault.
+  const revokedSessions = await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({
+        authHash: storedHash,
+        authSalt,
+        authParams: SERVER_AUTH_PARAMS,
+        kdfParams: input.kdfParams,
+        kdfVersion: input.kdfParams.version,
+        protectedVaultKey: input.protectedVaultKey,
+        securityStamp,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
 
-  const revokedSessions = await revokeAllSessions(db, user.id, input.sessionId);
+    return revokeAllSessions(tx as unknown as Database, user.id, input.sessionId);
+  });
 
   await recordSecurityEvent(db, {
     userId: user.id,

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lt, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { Folder, Item, ItemType } from "@/lib/db/schema";
 import { folders, items } from "@/lib/db/schema";
 import type { Database } from "@/lib/db/types";
@@ -57,7 +57,14 @@ export async function listItems(
     conditions.push(eq(items.favorite, options.favorite));
   }
   if (options.cursor) {
-    conditions.push(lt(items.createdAt, new Date(options.cursor)));
+    const cursor = decodeCursor(options.cursor);
+    // Keyset on (createdAt, id): filtering on createdAt alone skips or repeats
+    // rows that share a timestamp, which the sort then orders by id.
+    const keyset = or(
+      lt(items.createdAt, cursor.createdAt),
+      and(eq(items.createdAt, cursor.createdAt), lt(items.id, cursor.id)),
+    );
+    if (keyset) conditions.push(keyset);
   }
 
   const rows = await db
@@ -69,9 +76,31 @@ export async function listItems(
 
   const last = rows.at(-1);
   const nextCursor =
-    rows.length === options.limit && last ? last.createdAt.toISOString() : null;
+    rows.length === options.limit && last
+      ? encodeCursor(last.createdAt, last.id)
+      : null;
 
   return { items: rows, nextCursor };
+}
+
+interface Cursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodeCursor(createdAt: Date, id: string): string {
+  return `${createdAt.toISOString()}|${id}`;
+}
+
+function decodeCursor(cursor: string): Cursor {
+  const separator = cursor.lastIndexOf("|");
+  const createdAt = separator === -1 ? null : new Date(cursor.slice(0, separator));
+  const id = separator === -1 ? "" : cursor.slice(separator + 1);
+
+  if (!createdAt || Number.isNaN(createdAt.getTime()) || id.length === 0) {
+    throw AppError.badRequest("Invalid cursor");
+  }
+  return { createdAt, id };
 }
 
 export async function getItem(
@@ -194,7 +223,9 @@ export async function trashItem(
     .set({
       deletedAt: new Date(),
       updatedAt: new Date(),
-      revision: current.revision + 1,
+      // Bumped in SQL, not from the read above: a concurrent edit between the
+      // read and this write must not let the counter go backwards.
+      revision: sql`${items.revision} + 1`,
     })
     .where(and(eq(items.id, itemId), eq(items.userId, userId)))
     .returning();
@@ -215,7 +246,7 @@ export async function restoreItem(
     .set({
       deletedAt: null,
       updatedAt: new Date(),
-      revision: current.revision + 1,
+      revision: sql`${items.revision} + 1`,
     })
     .where(and(eq(items.id, itemId), eq(items.userId, userId)))
     .returning();

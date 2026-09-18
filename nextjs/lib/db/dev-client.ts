@@ -31,6 +31,17 @@ export function getDevDb(): Database | null {
 
 export async function bootstrapDevDatabase(): Promise<void> {
   if (!isDevDatabaseEnabled() || globalRef.__ahaaiDevDb) return;
+
+  if (process.env.NODE_ENV === "production") {
+    // Refuse loudly rather than quietly serving production traffic from a file
+    // on the host: a stray AHAALI_ALLOW_EMBEDDED_DB must not silently satisfy
+    // a deployment that forgot DATABASE_URL.
+    throw new Error(
+      "AHAALI_ALLOW_EMBEDDED_DB is set but NODE_ENV is production and DATABASE_URL is missing. " +
+        "The embedded database is development only; point DATABASE_URL at a real Postgres instance.",
+    );
+  }
+
   globalRef.__ahaaiDevBootstrapping ??= bootstrap();
   await globalRef.__ahaaiDevBootstrapping;
 }

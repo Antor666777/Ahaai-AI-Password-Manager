@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { SessionRetry } from "@/components/app/shell/SessionRetry";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { Button } from "@/components/ui/button";
 import { MonoValue } from "@/components/ui/data";
@@ -58,8 +59,24 @@ export default function UnlockPage() {
 
   async function handleSignOut() {
     setSigningOut(true);
-    await logout();
-    router.replace("/");
+    try {
+      await logout();
+    } finally {
+      // logout never rejects, but the navigation must not depend on that.
+      setSigningOut(false);
+      router.replace("/");
+    }
+  }
+
+  // A failed lookup is not a sign out, so offer a retry rather than the form.
+  if (status === "error") {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-paper px-4 py-9">
+        <div className="w-full max-w-sm">
+          <SessionRetry />
+        </div>
+      </div>
+    );
   }
 
   // While the session is looked up, or while a redirect is in flight, the form

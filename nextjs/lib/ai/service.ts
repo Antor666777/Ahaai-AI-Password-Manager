@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { AiMode, AiProvider } from "@/lib/db/schema";
 import { aiProviders, userSettings } from "@/lib/db/schema";
+import { isUniqueViolation } from "@/lib/db/errors";
 import type { Database } from "@/lib/db/types";
 import { AppError } from "@/lib/http/errors";
 import {
@@ -11,24 +12,6 @@ import {
 import { encryptApiKey } from "./crypto";
 import { getPreset } from "./presets";
 import { assertSafeBaseUrl } from "./url-guard";
-
-const UNIQUE_VIOLATION = "23505";
-
-function isUniqueViolation(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; depth < 5 && current; depth += 1) {
-    if (
-      typeof current === "object" &&
-      current !== null &&
-      "code" in current &&
-      (current as { code?: unknown }).code === UNIQUE_VIOLATION
-    ) {
-      return true;
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
-}
 
 export async function listProviders(
   db: Database,

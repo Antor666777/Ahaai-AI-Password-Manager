@@ -16,9 +16,13 @@ async function createLimiter(): Promise<RateLimiter> {
       logger.info("rate limiter: redis backend");
       return limiter;
     } catch (error) {
-      logger.warn("rate limiter: redis unavailable, falling back to memory", {
-        message: error instanceof Error ? error.message : String(error),
-      });
+      // Loud on purpose: the in-memory fallback is per instance, so on a
+      // multi-instance deployment the effective login limit multiplies by the
+      // instance count. That is a real weakening, not a routine warning.
+      logger.error(
+        "rate limiter: redis unavailable, falling back to per-instance memory limits",
+        { message: error instanceof Error ? error.message : String(error) },
+      );
     }
   }
   logger.info("rate limiter: in-memory backend");

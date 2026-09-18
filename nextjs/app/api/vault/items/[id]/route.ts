@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/auth/guard";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { getDb } from "@/lib/db/client";
 import { jsonError, jsonOk } from "@/lib/http/responses";
-import { parseJson } from "@/lib/http/validate";
+import { parseIdParam, parseJson } from "@/lib/http/validate";
 import { updateItemSchema } from "@/lib/vault/schemas";
 import { toPublicItem } from "@/lib/vault/serializers";
 import { getItem, trashItem, updateItem } from "@/lib/vault/service";
@@ -16,7 +16,7 @@ export async function GET(
   try {
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     const item = await getItem(db, user.id, id);
     return jsonOk({ item: toPublicItem(item) });
@@ -33,7 +33,7 @@ export async function PATCH(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
     const body = await parseJson(request, updateItemSchema);
 
     const item = await updateItem(db, user.id, id, body);
@@ -59,7 +59,7 @@ export async function DELETE(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     const item = await trashItem(db, user.id, id);
 

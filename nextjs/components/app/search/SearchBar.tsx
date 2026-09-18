@@ -86,7 +86,7 @@ export function SearchBar({
         <p className="text-[12.5px] text-ink-faint">
           {isLocal
             ? "Matches are ranked on your own machine, so nothing leaves it."
-            : "Only minted tokens reach the provider. Usernames and passwords never do."}
+            : "Item names and notes travel to your provider to rank matches. Usernames and passwords never do."}
         </p>
       </div>
     </form>

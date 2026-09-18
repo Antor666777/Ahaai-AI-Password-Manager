@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth/guard";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { getDb } from "@/lib/db/client";
 import { jsonError, jsonOk } from "@/lib/http/responses";
+import { parseIdParam } from "@/lib/http/validate";
 import { toPublicItem } from "@/lib/vault/serializers";
 import { restoreItem } from "@/lib/vault/service";
 
@@ -15,7 +16,7 @@ export async function POST(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     const item = await restoreItem(db, user.id, id);
 

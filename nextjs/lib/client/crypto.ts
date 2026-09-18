@@ -33,16 +33,50 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
-export function generatePassword(length = 20): string {
-  const alphabet =
-    "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_=+";
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-  let out = "";
-  for (let i = 0; i < length; i += 1) {
-    out += alphabet[bytes[i] % alphabet.length];
+/** Ambiguous characters (l, I, O, 0, 1) are left out on purpose. */
+const LOWER = "abcdefghijkmnopqrstuvwxyz";
+const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const DIGITS = "23456789";
+const SYMBOLS = "!@#$%^&*-_=+";
+const CLASSES = [LOWER, UPPER, DIGITS, SYMBOLS];
+
+/**
+ * Uniform index below `max`. Rejection sampling instead of `% max`, which is
+ * biased whenever 256 is not a multiple of the space.
+ */
+function randomIndex(max: number): number {
+  const limit = Math.floor(256 / max) * max;
+  const bytes = new Uint8Array(1);
+  for (;;) {
+    crypto.getRandomValues(bytes);
+    if (bytes[0] < limit) return bytes[0] % max;
   }
-  return out;
+}
+
+/**
+ * Generates a password that is guaranteed at least one character from every
+ * class, then shuffled so the guaranteed positions are not predictable.
+ */
+export function generatePassword(length = 20): string {
+  const alphabet = CLASSES.join("");
+  const chars: string[] = [];
+
+  for (let i = 0; i < Math.min(length, CLASSES.length); i += 1) {
+    const set = CLASSES[i];
+    chars.push(set[randomIndex(set.length)]);
+  }
+  for (let i = CLASSES.length; i < length; i += 1) {
+    chars.push(alphabet[randomIndex(alphabet.length)]);
+  }
+
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = randomIndex(i + 1);
+    const swap = chars[i];
+    chars[i] = chars[j];
+    chars[j] = swap;
+  }
+
+  return chars.join("");
 }
 
 export interface ItemSecrets {

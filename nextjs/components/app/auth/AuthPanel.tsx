@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { useRouter } from "next/navigation";
+import { SessionRetry } from "@/components/app/shell/SessionRetry";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { SegmentedControl } from "@/components/ui/controls";
@@ -157,20 +158,24 @@ export function AuthPanel({ className }: { className?: string }) {
   const heading =
     status === "loading"
       ? "Checking this browser"
-      : status === "authenticated"
-        ? "You are already signed in"
-        : isSignUp
-          ? "Create your vault"
-          : "Open your vault";
+      : status === "error"
+        ? "Could not check this browser"
+        : status === "authenticated"
+          ? "You are already signed in"
+          : isSignUp
+            ? "Create your vault"
+            : "Open your vault";
 
   const blurb =
     status === "loading"
       ? "One moment while Ahaai looks for a session left in this browser."
-      : status === "authenticated"
-        ? "A live session is here, so the vault is yours to open."
-        : isSignUp
-          ? "Two steps: an email, then the master password that seals everything."
-          : "Use the email and the master password you set for this vault.";
+      : status === "error"
+        ? "The check did not finish, so nothing here was signed out."
+        : status === "authenticated"
+          ? "A live session is here, so the vault is yours to open."
+          : isSignUp
+            ? "Two steps: an email, then the master password that seals everything."
+            : "Use the email and the master password you set for this vault.";
 
   const submitLabel =
     step === 1 ? "Continue" : isSignUp ? "Create account" : "Sign in";
@@ -497,6 +502,8 @@ export function AuthPanel({ className }: { className?: string }) {
                 </div>
               </form>
             </>
+          ) : status === "error" ? (
+            <SessionRetry />
           ) : (
             <AuthNotice
               state={status === "loading" ? "checking" : "authenticated"}

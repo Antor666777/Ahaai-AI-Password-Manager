@@ -8,7 +8,19 @@ export interface RequestContext {
 const MAX_IP_CHARS = 64;
 const MAX_UA_CHARS = 512;
 
+/**
+ * Forwarded headers are only worth anything when something in front sets them.
+ * A directly reachable deployment lets any caller invent `x-forwarded-for` and
+ * walk around the per-IP rate limits, so TRUST_PROXY=0 turns them off.
+ * The Fetch Request API exposes no socket address, so the fallback is null.
+ */
+function forwardedHeadersTrusted(): boolean {
+  return process.env.TRUST_PROXY !== "0";
+}
+
 export function getClientIp(request: Request): string | null {
+  if (!forwardedHeadersTrusted()) return null;
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
     const first = forwarded.split(",")[0]?.trim();

@@ -2,6 +2,7 @@ import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireAuth } from "@/lib/auth/guard";
 import { getDb } from "@/lib/db/client";
 import { jsonError, jsonOk } from "@/lib/http/responses";
+import { parseIdParam } from "@/lib/http/validate";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { testProviderConnection } from "@/lib/ai/test-connection";
 
@@ -14,7 +15,7 @@ export async function POST(
     const db = getDb();
     const { user } = await requireAuth(db, request);
     await enforceRateLimit("aiProviderTest", `user:${user.id}`);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     const result = await testProviderConnection(db, user.id, id);
     return jsonOk(result);

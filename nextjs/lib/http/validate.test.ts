@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AppError } from "./errors";
-import { parseJson, parseQuery } from "./validate";
+import { parseIdParam, parseJson, parseQuery } from "./validate";
 
 const schema = z.object({ email: z.string().email(), age: z.number().int() });
 
@@ -48,6 +48,23 @@ describe("parseJson", () => {
     await expect(parseJson(request, schema)).rejects.toMatchObject({
       code: "BAD_REQUEST",
     });
+  });
+});
+
+describe("parseIdParam", () => {
+  it("accepts a uuid and returns it", () => {
+    const id = "3f1a9c2e-1b4d-4a6f-8c3e-9d2b7a5e4f10";
+    expect(parseIdParam(id)).toBe(id);
+  });
+
+  it("rejects a malformed id as a bad request rather than letting it reach the db", () => {
+    expect(() => parseIdParam("not-a-uuid")).toThrow(AppError);
+    try {
+      parseIdParam("not-a-uuid");
+    } catch (error) {
+      expect((error as AppError).code).toBe("BAD_REQUEST");
+      expect((error as AppError).status).toBe(400);
+    }
   });
 });
 

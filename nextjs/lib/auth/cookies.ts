@@ -16,10 +16,22 @@ export interface CookieOptions {
   maxAgeSeconds: number;
 }
 
+/**
+ * `NODE_ENV` describes the build, not the scheme the browser is actually on.
+ * A production build served over plain HTTP would set `Secure` and have the
+ * browser drop the cookie on the floor, so COOKIE_SECURE overrides it.
+ */
+function cookieSecure(): boolean {
+  const override = process.env.COOKIE_SECURE;
+  if (override === "true") return true;
+  if (override === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 export function sessionCookieOptions(maxAgeMs: number): CookieOptions {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(),
     sameSite: "lax",
     path: "/",
     maxAgeSeconds: Math.max(0, Math.floor(maxAgeMs / 1000)),

@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { cn } from "./cn";
+
+/** How long a copied secret may sit on the clipboard before it is wiped. */
+const CLIPBOARD_CLEAR_MS = 30_000;
 
 export function Panel({
   children,
@@ -82,12 +85,40 @@ export function CopyButton({
   className?: string;
 }) {
   const [state, setState] = useState<"idle" | "done" | "error">("idle");
+  const clearTimer = useRef<number | null>(null);
+
+  /**
+   * Wipes the clipboard a short while after a copy. Deliberately not cancelled
+   * on unmount: closing the dialog is exactly when the wipe matters.
+   */
+  function scheduleClear() {
+    if (clearTimer.current !== null) window.clearTimeout(clearTimer.current);
+    clearTimer.current = window.setTimeout(() => {
+      clearTimer.current = null;
+      void wipeIfStillOurs();
+    }, CLIPBOARD_CLEAR_MS);
+  }
+
+  /** Clears only if our value is still there, so new clipboard content survives. */
+  async function wipeIfStillOurs() {
+    const clipboard = navigator.clipboard;
+    if (!clipboard) return;
+    try {
+      // If the read is denied we cannot tell, and leaving a secret behind is
+      // the worse outcome, so it is cleared either way.
+      const current = await clipboard.readText().catch(() => null);
+      if (current === null || current === value) await clipboard.writeText("");
+    } catch {
+      // Clipboard access can be revoked at any moment; nothing to do about it.
+    }
+  }
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
       setState("done");
       window.setTimeout(() => setState("idle"), 1600);
+      scheduleClear();
     } catch {
       setState("error");
       window.setTimeout(() => setState("idle"), 2400);

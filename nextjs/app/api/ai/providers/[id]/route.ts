@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/auth/guard";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { getDb } from "@/lib/db/client";
 import { jsonError, jsonOk } from "@/lib/http/responses";
-import { parseJson } from "@/lib/http/validate";
+import { parseIdParam, parseJson } from "@/lib/http/validate";
 import { updateProviderSchema } from "@/lib/ai/schemas";
 import { toPublicProvider } from "@/lib/ai/serializers";
 import { deleteProvider, updateProvider } from "@/lib/ai/service";
@@ -17,7 +17,7 @@ export async function PATCH(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
     const body = await parseJson(request, updateProviderSchema);
 
     const provider = await updateProvider(db, user.id, id, body);
@@ -43,7 +43,7 @@ export async function DELETE(
     assertSameOrigin(request);
     const db = getDb();
     const { user } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     await deleteProvider(db, user.id, id);
 

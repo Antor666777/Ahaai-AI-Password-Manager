@@ -1,7 +1,18 @@
 import { z } from "zod";
 import { AppError } from "./errors";
+import { uuidSchema } from "./schemas";
 
 const MAX_BODY_BYTES = 256 * 1024;
+
+/**
+ * Validates a dynamic route segment. Without this an unknown id reaches
+ * Postgres and fails the uuid cast, which surfaces as a 500 instead of a 400.
+ */
+export function parseIdParam(value: string): string {
+  const result = uuidSchema.safeParse(value);
+  if (!result.success) throw AppError.badRequest("Invalid id");
+  return result.data;
+}
 
 export async function parseJson<T>(
   request: Request,

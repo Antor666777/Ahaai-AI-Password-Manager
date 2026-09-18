@@ -1,5 +1,6 @@
 import type { Database } from "@/lib/db/types";
 import { securityEvents } from "@/lib/db/schema";
+import { logger } from "@/lib/log";
 
 export type SecurityEventType =
   | "auth.register"
@@ -31,16 +32,29 @@ export interface SecurityEventInput {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Writes an audit row. Auditing is never allowed to fail the operation it
+ * records: callers await this after a write has already committed, so a throw
+ * here would report a failure for work that actually succeeded.
+ */
 export async function recordSecurityEvent(
   db: Database,
   event: SecurityEventInput,
 ): Promise<void> {
-  await db.insert(securityEvents).values({
-    userId: event.userId ?? null,
-    type: event.type,
-    severity: event.severity ?? "info",
-    ipAddress: event.ip ?? null,
-    userAgent: event.userAgent ?? null,
-    metadata: event.metadata ?? null,
-  });
+  try {
+    await db.insert(securityEvents).values({
+      userId: event.userId ?? null,
+      type: event.type,
+      severity: event.severity ?? "info",
+      ipAddress: event.ip ?? null,
+      userAgent: event.userAgent ?? null,
+      metadata: event.metadata ?? null,
+    });
+  } catch (error) {
+    logger.error("security event was not recorded", {
+      type: event.type,
+      userId: event.userId ?? null,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

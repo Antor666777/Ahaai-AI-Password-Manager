@@ -21,6 +21,7 @@ import { buildCandidateSet, newId, openItem, sealItem } from "./crypto";
 import { useSession } from "./session";
 import type {
   AiMode,
+  ApiItem,
   DecryptedFolder,
   DecryptedItem,
   ItemPayload,
@@ -28,6 +29,27 @@ import type {
 } from "./types";
 
 const FOLDER_AAD = "ahaai:folder:v1";
+const PAGE_LIMIT = 500;
+
+/**
+ * Walks every page of the item list. The endpoint caps a page at 500, so a
+ * single request would silently hide the rest of a large vault.
+ */
+async function fetchAllItems(): Promise<ApiItem[]> {
+  const collected: ApiItem[] = [];
+  let cursor: string | undefined;
+
+  for (;;) {
+    const page = await api.items({
+      limit: PAGE_LIMIT,
+      includeTrashed: true,
+      cursor,
+    });
+    collected.push(...page.items);
+    if (!page.nextCursor || page.nextCursor === cursor) return collected;
+    cursor = page.nextCursor;
+  }
+}
 
 export interface SearchHit {
   item: DecryptedItem;
@@ -93,10 +115,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const [all, folderRows] = await Promise.all([
-        api.items({ limit: 500, includeTrashed: true }),
+        fetchAllItems(),
         api.folders(),
       ]);
-      const decoded = all.items.map((item) => openItem(vaultKey, item));
+      const decoded = all.map((item) => openItem(vaultKey, item));
       setItems(decoded.filter((item) => item.deletedAt === null));
       setTrashed(decoded.filter((item) => item.deletedAt !== null));
       setFolders(

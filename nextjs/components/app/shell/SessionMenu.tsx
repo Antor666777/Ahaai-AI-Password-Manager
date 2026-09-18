@@ -33,9 +33,14 @@ export function SessionMenu({ onNavigate }: { onNavigate?: () => void }) {
 
   async function handleSignOut() {
     setSigningOut(true);
-    await logout();
-    setOpen(false);
-    router.replace("/");
+    try {
+      await logout();
+    } finally {
+      // logout never rejects, but the navigation must not depend on that.
+      setSigningOut(false);
+      setOpen(false);
+      router.replace("/");
+    }
   }
 
   return (

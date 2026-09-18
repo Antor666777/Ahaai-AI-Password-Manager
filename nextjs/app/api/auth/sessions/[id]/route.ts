@@ -8,6 +8,7 @@ import { getDb } from "@/lib/db/client";
 import { sessions } from "@/lib/db/schema";
 import { AppError } from "@/lib/http/errors";
 import { jsonError, jsonOk } from "@/lib/http/responses";
+import { parseIdParam } from "@/lib/http/validate";
 
 export async function DELETE(
   request: Request,
@@ -17,7 +18,7 @@ export async function DELETE(
     assertSameOrigin(request);
     const db = getDb();
     const { user, session } = await requireAuth(db, request);
-    const { id } = await params;
+    const id = parseIdParam((await params).id);
 
     if (id === session.id) {
       throw AppError.badRequest("Use logout to end the current session");
